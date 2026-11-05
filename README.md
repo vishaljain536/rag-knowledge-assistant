@@ -1,36 +1,80 @@
-# RAG Knowledge Assistant
+# Global RAG Assistant
 
-A beginner-friendly Retrieval-Augmented Generation demo. Upload PDF, TXT, or Markdown files, retrieve the most relevant passages with OpenAI embeddings, then ask questions grounded in those passages.
+A full-stack, multi-provider chat application that answers questions from PDFs, Word documents, spreadsheets, text files, public URLs, and image uploads.
 
-## Features
+The React interface lets each user choose a language-model provider and retrieval store. The FastAPI backend uses LangChain for integrations and LangGraph to run a retrieve-then-answer workflow. Conversation history is stored in SQLite; document indexes can use local FAISS, local Chroma, or Pinecone.
 
-- Extract text from PDFs and read plain text or Markdown files.
-- Split documents into overlapping chunks and build an in-memory embedding index.
-- Rank chunks by cosine similarity for each question.
-- Show citations with source filenames and PDF page numbers.
-- Treat document excerpts as reference data, not instructions.
+## What is included
 
-## Run locally
+- **Chat UI:** React + Vite interface with document/URL ingestion, streamed-style conversation display, citations, and provider settings.
+- **File support:** PDF, DOCX, XLSX/XLS, CSV, TXT, Markdown, PNG, JPG/JPEG, and WebP.
+- **URL support:** extracts readable text from a public webpage.
+- **LLM choices:** OpenAI, Google Gemini, Groq, and Azure OpenAI.
+- **Vector stores:** FAISS, Chroma, and Pinecone.
+- **Database:** SQLite keeps conversation and message records for a lightweight single-user deployment.
+- **Safety:** API keys are never written to SQLite or project files. Retrieved content is treated as untrusted reference material, never as application instructions.
 
-Requires Python 3.10+ and an OpenAI API key. Document text is sent to OpenAI for embeddings and answers. The index lives in Streamlit session memory and is rebuilt when files or indexing settings change.
+## Architecture
 
-1. Clone this repository and open the project folder.
-2. Create a virtual environment: python -m venv .venv
-3. Activate it (macOS/Linux: source .venv/bin/activate; Windows: .venv\Scripts\activate)
-4. Install packages: pip install -r requirements.txt
-5. Set your key in the terminal: macOS/Linux: export OPENAI_API_KEY=your-key; Windows PowerShell: $env:OPENAI_API_KEY="your-key"
-6. Start the app: streamlit run app.py
-7. Alternatively, paste the key into the password field in the app sidebar.
+```text
+React browser UI
+   | files / URL / question / temporary provider configuration
+FastAPI
+   |-- document parsers -> chunking -> embeddings -> FAISS | Chroma | Pinecone
+   |-- LangGraph: retrieve -> grounded answer -> citations
+   `-- SQLite: conversation metadata + messages
+```
 
-## How it works
+## Start locally
 
-1. The app extracts text and splits it into overlapping character chunks.
-2. OpenAI creates an embedding vector for each chunk.
-3. A question is embedded and compared with the chunks using cosine similarity.
-4. The top matching passages are sent to the chat model with instructions to answer only from those excerpts.
+### Docker
 
-## Notes
+1. Copy `.env.example` to `.env` and add any server-side configuration you need.
+2. Run `docker compose up --build`.
+3. Open `http://localhost:5173`.
 
-- Use documents you are allowed to process. Avoid uploading confidential data unless you have reviewed the provider's data terms.
-- Scanned PDFs without a text layer need OCR before upload.
-- This is a learning prototype: embeddings are not persisted and the index resets when the app session ends.
+### Development
+
+Backend:
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell: .venv\\Scripts\\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+Frontend, in another terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open the Vite URL shown in the terminal. The default API URL is `http://localhost:8000`; set `VITE_API_URL` when hosting the API elsewhere.
+
+## Provider setup
+
+Enter the selected provider key in the UI. It is sent with the request to the backend and is not stored in SQLite.
+
+| Chat provider | Typical model | Embeddings |
+| --- | --- | --- |
+| OpenAI | `gpt-4o-mini` | OpenAI embeddings |
+| Gemini | `gemini-1.5-flash` | Gemini embeddings or a separate OpenAI embedding key |
+| Groq | `llama-3.1-8b-instant` | Groq has no embedding endpoint; choose OpenAI, Gemini, or local Hugging Face embeddings |
+| Azure OpenAI | deployment name | Azure embeddings for Azure deployments |
+
+For a Gemini chat model, set the UI's embedding provider to Gemini if the same key should create embeddings. The Hugging Face option downloads the selected open-source Sentence Transformers model on first use and caches it locally; its default is `sentence-transformers/all-MiniLM-L6-v2` and it requires no embedding API key. Pinecone also needs its server environment credentials and an existing index compatible with the selected embedding dimensions.
+
+## Images
+
+The UI accepts image files and retains them as source items. This first production scaffold marks image sources for citation; connect a multimodal vision extractor for the selected provider before relying on image content as factual RAG context. PDFs with scanned images likewise need OCR or a vision extraction step.
+
+## Deployment notes
+
+- Use HTTPS and an authenticated API before sharing a deployment.
+- Replace anonymous `session_id` use with real authentication for multi-user production.
+- Use a managed database rather than SQLite when running multiple API replicas.
+- The local FAISS/Chroma indexes are stored in `data/` and should be backed up or mounted as persistent storage.
