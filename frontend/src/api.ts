@@ -32,9 +32,6 @@ const index = (settings: Settings) => ({
   chunk_overlap: settings.chunk_overlap,
 });
 
-const authHeaders = (settings: Settings): Record<string, string> =>
-  settings.deployment_access_key ? { "X-App-Access-Key": settings.deployment_access_key } : {};
-
 function errorDetail(body: unknown, status: number, requestId?: string): string {
   const failure = body as ApiFailure | null;
   const detail = typeof failure?.detail === "string" ? failure.detail : null;
@@ -75,13 +72,13 @@ export async function upload(sessionId: string, files: File[], settings: Setting
   form.append("provider_json", JSON.stringify(provider(settings)));
   form.append("index_json", JSON.stringify(index(settings)));
   files.forEach(file => form.append("files", file));
-  return request<IngestResult>("/ingest/files", { method: "POST", headers: authHeaders(settings), body: form });
+  return request<IngestResult>("/ingest/files", { method: "POST", body: form });
 }
 
 export async function addUrl(sessionId: string, url: string, settings: Settings): Promise<IngestResult> {
   return request<IngestResult>("/ingest/url", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders(settings) },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, url, provider: provider(settings), index: index(settings) }),
   });
 }
@@ -89,7 +86,7 @@ export async function addUrl(sessionId: string, url: string, settings: Settings)
 export async function ask(sessionId: string, question: string, settings: Settings): Promise<ChatResult> {
   return request<ChatResult>("/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders(settings) },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, question, provider: provider(settings), index: index(settings) }),
   });
 }
