@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: rag-knowledge-assistant-api
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /health
+    numInstances: 1
+    maxShutdownDelaySeconds: 30
+    disk:
+      name: rag-data
+      mountPath: /app/data
+      sizeGB: 10
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:////app/data/app.db
+      - key: DATA_DIR
+        value: /app/data
+      - key: HF_HOME
+        value: /app/data/huggingface
+      - key: ENABLE_URL_INGESTION
+        value: "false"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: APP_ACCESS_KEY
+        generateValue: true

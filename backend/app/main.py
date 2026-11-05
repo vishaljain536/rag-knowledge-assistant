@@ -1,8 +1,9 @@
 import json
+import secrets
 from contextlib import asynccontextmanager
-from pathlib import Path
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Path, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from .db import SessionLocal, init_db
@@ -10,7 +11,7 @@ from .documents import extract_upload, extract_url
 from .graph import run_rag
 from .models import Conversation, Message
 from .rag import build_index
-from .schemas import ChatRequest, ChatResponse, IndexSettings, IngestUrlRequest, ProviderSettings
+from .schemas import ChatRequest, ChatResponse, IndexSettings, IngestUrlRequest, ProviderSettings, SESSION_ID_PATTERN
 from .settings import settings
 
 
@@ -21,7 +22,19 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Global RAG Assistant API", version="1.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=[x.strip() for x in settings.cors_origins.split(",")], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def require_deployment_access_key(request: Request, call_next):
+    if request.method == "OPTIONS" or request.url.path == "/health" or not settings.app_access_key:
+        return await call_next(request)
+    supplied = request.headers.get("X-App-Access-Key", "")
+    if not secrets.compare_digest(supplied, settings.app_access_key):
+        return JSONResponse(status_code=401, content={"detail": "A valid deployment access key is required."})
+    return await call_next(request)
+
+
+app.add_middleware(CORSMiddleware, allow_origins=[x.strip() for x in settings.cors_origins.split(",")], allow_credentials=False, allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "X-App-Access-Key"])
 
 
 def parse_form_settings(provider_json: str, index_json: str) -> tuple[ProviderSettings, IndexSettings]:
@@ -58,7 +71,7 @@ def health():
 
 @app.post("/ingest/files")
 async def ingest_files(
-    session_id: str = Form(...),
+    session_id: str = Form(..., pattern=SESSION_ID_PATTERN),
     provider_json: str = Form(...),
     index_json: str = Form("{}"),
     files: list[UploadFile] = File(...),
@@ -79,6 +92,8 @@ async def ingest_files(
 
 @app.post("/ingest/url")
 async def ingest_url(request: IngestUrlRequest):
+    if not settings.enable_url_ingestion:
+        raise HTTPException(status_code=503, detail="URL ingestion is disabled on this deployment.")
     try:
         docs = await extract_url(request.url)
         chunks = build_index(request.session_id, docs, request.provider, request.index)
@@ -100,7 +115,7 @@ def chat(request: ChatRequest, db: Session = Depends(db_session)):
 
 
 @app.get("/conversations/{session_id}")
-def conversations(session_id: str, db: Session = Depends(db_session)):
+def conversations(session_id: str = Path(..., pattern=SESSION_ID_PATTERN), db: Session = Depends(db_session)):
     conversation = db.query(Conversation).filter_by(session_id=session_id).first()
     if not conversation:
         return []
