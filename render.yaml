@@ -23,6 +23,6 @@ services:
       - key: ENABLE_URL_INGESTION
         value: "false"
       - key: CORS_ORIGINS
-        sync: false
+        value: https://rag-knowledge-assistant-wine.vercel.app
       - key: APP_ACCESS_KEY
         generateValue: true

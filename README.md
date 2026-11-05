@@ -74,7 +74,7 @@ The UI accepts image files and retains them as source items. This first producti
 
 ## Deployment
 
-For a private single-tenant hosted deployment, use the Vercel frontend and Render Docker backend configuration in [`DEPLOYMENT.md`](DEPLOYMENT.md). Hosted URL ingestion is disabled until its SSRF-safe fetcher is implemented. The production backend requires a deployment access key in addition to the user's model-provider key.
+For a private single-tenant hosted deployment, use the Vercel frontend and Render Docker backend configuration in [`DEPLOYMENT.md`](DEPLOYMENT.md). The frontend is available at [rag-knowledge-assistant-wine.vercel.app](https://rag-knowledge-assistant-wine.vercel.app); it becomes functional after the backend is provisioned and `VITE_API_URL` is configured. Hosted URL ingestion is disabled until its SSRF-safe fetcher is implemented. The production backend requires a deployment access key in addition to the user's model-provider key.
 
 ## Deployment notes
 
