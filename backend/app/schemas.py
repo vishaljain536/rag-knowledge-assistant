@@ -1,8 +1,10 @@
-from typing import Literal
+from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 Provider = Literal["openai", "gemini", "groq", "azure_openai"]
 Store = Literal["faiss", "chroma", "pinecone"]
+SESSION_ID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+SessionId = Annotated[str, Field(pattern=SESSION_ID_PATTERN)]
 
 
 class ProviderSettings(BaseModel):
@@ -27,13 +29,13 @@ class IndexSettings(BaseModel):
 
 class IngestUrlRequest(BaseModel):
     url: str
-    session_id: str
+    session_id: SessionId
     provider: ProviderSettings
     index: IndexSettings = Field(default_factory=IndexSettings)
 
 
 class ChatRequest(BaseModel):
-    session_id: str
+    session_id: SessionId
     question: str = Field(min_length=1, max_length=12000)
     provider: ProviderSettings
     index: IndexSettings = Field(default_factory=IndexSettings)

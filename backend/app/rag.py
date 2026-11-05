@@ -38,7 +38,10 @@ def split(documents: list[Document], index: IndexSettings) -> list[Document]:
 
 
 def store_path(session_id: str) -> Path:
-    path = settings.data_dir / "indexes" / session_id
+    index_root = (settings.data_dir / "indexes").resolve()
+    path = (index_root / session_id).resolve()
+    if not path.is_relative_to(index_root):
+        raise ValueError("Invalid session identifier.")
     path.mkdir(parents=True, exist_ok=True)
     return path
 

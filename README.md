@@ -72,9 +72,13 @@ For a Gemini chat model, set the UI's embedding provider to Gemini if the same k
 
 The UI accepts image files and retains them as source items. This first production scaffold marks image sources for citation; connect a multimodal vision extractor for the selected provider before relying on image content as factual RAG context. PDFs with scanned images likewise need OCR or a vision extraction step.
 
+## Deployment
+
+For a private single-tenant hosted deployment, use the Vercel frontend and Render Docker backend configuration in [`DEPLOYMENT.md`](DEPLOYMENT.md). Hosted URL ingestion is disabled until its SSRF-safe fetcher is implemented. The production backend requires a deployment access key in addition to the user's model-provider key.
+
 ## Deployment notes
 
-- Use HTTPS and an authenticated API before sharing a deployment.
+- Do not expose the API publicly without setting `APP_ACCESS_KEY`; this is a private single-tenant boundary, not multi-user authentication.
 - Replace anonymous `session_id` use with real authentication for multi-user production.
 - Use a managed database rather than SQLite when running multiple API replicas.
 - The local FAISS/Chroma indexes are stored in `data/` and should be backed up or mounted as persistent storage.
