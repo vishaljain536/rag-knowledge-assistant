@@ -1,4 +1,5 @@
-export type Provider = "openai" | "gemini" | "groq" | "azure_openai";
+export type Provider = "openai" | "gemini" | "groq" | "anthropic" | "mistral" | "openrouter" | "azure_openai";
+export type OperationalLog = { sequence: number; timestamp: string; level: string; event: string; message: string; request_id?: string; details: Record<string, unknown> };
 export type VectorStore = "faiss" | "chroma" | "pinecone";
 export type Citation = { source: string; page?: number; chunk: number; excerpt: string };
 export type ChatMessage = { role: "user" | "assistant"; content: string; citations?: Citation[] };

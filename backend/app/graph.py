@@ -3,6 +3,7 @@ from typing import TypedDict
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from .providers import chat_model, response_text
+from .operational_logs import log_event
 from .rag import retrieve
 from .schemas import ChatRequest, Citation
 
@@ -30,7 +31,9 @@ def is_casual_greeting(question: str) -> bool:
 
 
 def route_request(state: RAGState) -> str:
-    return "greeting" if is_casual_greeting(state["request"].question) else "retrieve"
+    route = "greeting" if is_casual_greeting(state["request"].question) else "retrieve"
+    log_event("info", "rag.routed", "Chat request routed", route=route)
+    return route
 
 
 def greeting_node(_: RAGState):
@@ -39,7 +42,10 @@ def greeting_node(_: RAGState):
 
 def retrieve_node(state: RAGState):
     request = state["request"]
-    return {"docs": retrieve(request.session_id, request.question, request.provider, request.index)}
+    log_event("info", "retrieval.started", "Document retrieval started", vector_store=request.index.vector_store)
+    docs = retrieve(request.session_id, request.question, request.provider, request.index)
+    log_event("info", "retrieval.completed", "Document retrieval completed", documents=len(docs))
+    return {"docs": docs}
 
 
 def answer_node(state: RAGState):
@@ -51,8 +57,11 @@ def answer_node(state: RAGState):
         for i, doc in enumerate(state["docs"], 1)
     )
     prompt = f"Question: {request.question}\n\nRetrieved context:\n{context}"
+    log_event("info", "model.started", "Chat model invocation started", provider=request.provider.provider)
     response = chat_model(request.provider).invoke([SystemMessage(SYSTEM_PROMPT), HumanMessage(prompt)])
-    return {"answer": response_text(response.content)}
+    answer = response_text(response.content)
+    log_event("info", "model.completed", "Chat model invocation completed", provider=request.provider.provider)
+    return {"answer": answer}
 
 
 workflow = StateGraph(RAGState)
