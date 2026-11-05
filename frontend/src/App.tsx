@@ -14,7 +14,6 @@ const providerModels: Record<Settings["provider"], string> = {
 };
 
 const defaults: Settings = {
-  deployment_access_key: "",
   provider: "openai",
   model: providerModels.openai,
   api_key: "",
@@ -142,13 +141,6 @@ export default function App() {
         <span aria-hidden="true">✦</span>
         <div><strong>Global RAG</strong><small>Multi-source assistant</small></div>
       </div>
-
-      <section>
-        <h2>Access</h2>
-        <label>Deployment access key
-          <input type="password" value={settings.deployment_access_key} onChange={event => update({ deployment_access_key: event.target.value })} placeholder="Required by hosted private deployments" />
-        </label>
-      </section>
 
       <section>
         <h2>Model</h2>

@@ -77,7 +77,7 @@ The UI accepts image files and retains them as source items. This first producti
 
 ## Deployment
 
-For a private single-tenant hosted deployment, use the Vercel frontend and Render Docker backend configuration in [`DEPLOYMENT.md`](DEPLOYMENT.md). The frontend is available at [rag-knowledge-assistant-wine.vercel.app](https://rag-knowledge-assistant-wine.vercel.app); it becomes functional after the backend is provisioned and `VITE_API_URL` is configured. Hosted URL ingestion is disabled until its SSRF-safe fetcher is implemented. The production backend requires a deployment access key in addition to the user's model-provider key.
+For a private single-tenant hosted deployment, use the Vercel frontend and Render Docker backend configuration in [`DEPLOYMENT.md`](DEPLOYMENT.md). The frontend is available at [rag-knowledge-assistant-wine.vercel.app](https://rag-knowledge-assistant-wine.vercel.app); it becomes functional after the backend is provisioned and `VITE_API_URL` is configured. Hosted URL ingestion is disabled until its SSRF-safe fetcher is implemented.
 
 ## Operational logs
 
@@ -85,17 +85,17 @@ The backend keeps the latest 500 sanitized operational events in process memory.
 
 ```bash
 # Recent events
-curl -H "X-App-Access-Key: $APP_ACCESS_KEY" "http://localhost:8000/logs?limit=100"
+curl "http://localhost:8000/logs?limit=100"
 
 # Follow events line by line as Server-Sent Events
-curl -N -H "X-App-Access-Key: $APP_ACCESS_KEY" "http://localhost:8000/logs/stream"
+curl -N "http://localhost:8000/logs/stream"
 ```
 
-Both log endpoints require the same deployment access key as the application when `APP_ACCESS_KEY` is configured. Anyone with that shared key can read these operational events; this is a private single-tenant feature, not operator-level authorization.
+The log endpoints are public. They contain only sanitized operational metadata, but anyone with the backend URL can read them.
 
 ## Deployment notes
 
-- Do not expose the API publicly without setting `APP_ACCESS_KEY`; this is a private single-tenant boundary, not multi-user authentication.
+- The API has no authentication; every request must carry the caller's own model-provider key.
 - Replace anonymous `session_id` use with real authentication for multi-user production.
 - Use a managed database rather than SQLite when running multiple API replicas.
 - The local FAISS/Chroma indexes are stored in `data/` and should be backed up or mounted as persistent storage.

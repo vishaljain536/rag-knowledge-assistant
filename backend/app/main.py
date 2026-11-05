@@ -1,11 +1,10 @@
 import json
-import secrets
 import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Path, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from .db import SessionLocal, init_db
@@ -39,21 +38,13 @@ def _route_label(request: Request) -> str:
 
 
 @app.middleware("http")
-async def access_and_operational_logging(request: Request, call_next):
+async def operational_logging(request: Request, call_next):
     request_id = str(uuid4())
     token = set_request_id(request_id)
     request.state.request_id = request_id
     started = time.perf_counter()
-    response = None
     try:
-        if request.method != "OPTIONS" and request.url.path != "/health" and settings.app_access_key:
-            supplied = request.headers.get("X-App-Access-Key", "")
-            if not secrets.compare_digest(supplied, settings.app_access_key):
-                response = JSONResponse(status_code=401, content={"detail": "A valid deployment access key is required.", "request_id": request_id})
-            else:
-                response = await call_next(request)
-        else:
-            response = await call_next(request)
+        response = await call_next(request)
     except Exception as exc:
         if not request.url.path.startswith("/logs"):
             log_event("error", "http.failed", "Request failed before a response was produced", method=request.method, route=_route_label(request), error_type=type(exc).__name__)
@@ -80,7 +71,7 @@ app.add_middleware(
     allow_origins=[x.strip() for x in settings.cors_origins.split(",")],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "X-App-Access-Key"],
+    allow_headers=["Content-Type"],
     expose_headers=["X-Request-ID"],
 )
 
