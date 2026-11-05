@@ -1,7 +1,7 @@
 from typing import Annotated, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-Provider = Literal["openai", "gemini", "groq", "azure_openai"]
+Provider = Literal["openai", "gemini", "groq", "anthropic", "mistral", "openrouter", "azure_openai"]
 Store = Literal["faiss", "chroma", "pinecone"]
 SESSION_ID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 SessionId = Annotated[str, Field(pattern=SESSION_ID_PATTERN)]
@@ -17,6 +17,14 @@ class ProviderSettings(BaseModel):
     embedding_provider: Literal["openai", "gemini", "huggingface"] = "openai"
     embedding_api_key: str | None = None
     embedding_model: str | None = None
+
+    @model_validator(mode="after")
+    def validate_embedding_credentials(self):
+        if self.embedding_provider == "openai" and self.provider not in {"openai", "azure_openai"} and not self.embedding_api_key:
+            raise ValueError("A separate OpenAI embedding API key is required for this chat provider.")
+        if self.embedding_provider == "gemini" and self.provider != "gemini" and not self.embedding_api_key:
+            raise ValueError("A separate Gemini embedding API key is required for this chat provider.")
+        return self
 
 
 class IndexSettings(BaseModel):

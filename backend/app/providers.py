@@ -13,8 +13,19 @@ def chat_model(config: ProviderSettings) -> BaseChatModel:
     if config.provider == "groq":
         from langchain_groq import ChatGroq
         return ChatGroq(model=config.model, api_key=config.api_key, temperature=0.2)
-    from langchain_openai import AzureChatOpenAI
-    return AzureChatOpenAI(azure_deployment=config.azure_deployment or config.model, azure_endpoint=config.azure_endpoint, api_key=config.api_key, api_version=config.api_version, temperature=0.2)
+    if config.provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(model=config.model, api_key=config.api_key, temperature=0.2)
+    if config.provider == "mistral":
+        from langchain_mistralai import ChatMistralAI
+        return ChatMistralAI(model=config.model, api_key=config.api_key, temperature=0.2)
+    if config.provider == "openrouter":
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(model=config.model, api_key=config.api_key, base_url="https://openrouter.ai/api/v1", temperature=0.2)
+    if config.provider == "azure_openai":
+        from langchain_openai import AzureChatOpenAI
+        return AzureChatOpenAI(azure_deployment=config.azure_deployment or config.model, azure_endpoint=config.azure_endpoint, api_key=config.api_key, api_version=config.api_version, temperature=0.2)
+    raise ValueError(f"Unsupported chat provider: {config.provider}")
 
 
 def response_text(content: object) -> str:

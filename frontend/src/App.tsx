@@ -3,7 +3,8 @@ import ReactMarkdown from "react-markdown";
 import { addUrl, ask, upload } from "./api";
 import type { ChatMessage, Settings } from "./types";
 
-const defaults: Settings = {deployment_access_key:"", provider:"openai", model:"gpt-4o-mini", api_key:"", embedding_provider:"openai", embedding_api_key:"", embedding_model:"sentence-transformers/all-MiniLM-L6-v2", vector_store:"faiss", pinecone_index:"", pinecone_namespace:"default", chunk_size:900, chunk_overlap:150};
+const providerModels: Record<Settings["provider"], string> = {openai:"gpt-4o-mini", gemini:"gemini-3.1-flash-lite", groq:"llama-3.1-8b-instant", anthropic:"claude-sonnet-5-5", mistral:"mistral-small-latest", openrouter:"openrouter/auto", azure_openai:"gpt-4o-mini"};
+const defaults: Settings = {deployment_access_key:"", provider:"openai", model:providerModels.openai, api_key:"", embedding_provider:"openai", embedding_api_key:"", embedding_model:"sentence-transformers/all-MiniLM-L6-v2", vector_store:"faiss", pinecone_index:"", pinecone_namespace:"default", chunk_size:900, chunk_overlap:150};
 const urlIngestionEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_URL_INGESTION === "true";
 const sessionId = crypto.randomUUID();
 const suggestions = ["What are the main points?", "Summarize the uploaded information", "What evidence supports the conclusion?"];
@@ -14,7 +15,8 @@ export default function App() {
   const [busy, setBusy] = useState(false); const [status, setStatus] = useState("Add sources, then ask a question."); const fileInput = useRef<HTMLInputElement>(null);
   const update = (patch: Partial<Settings>) => setSettings(old => ({...old, ...patch}));
   const providerNeedsAzure = settings.provider === "azure_openai";
-  const canChat = useMemo(() => !!settings.api_key && !busy, [settings.api_key, busy]);
+  const embeddingKeyRequired = (settings.embedding_provider === "openai" && !["openai", "azure_openai"].includes(settings.provider)) || (settings.embedding_provider === "gemini" && settings.provider !== "gemini");
+  const canChat = useMemo(() => !!settings.api_key && (!embeddingKeyRequired || !!settings.embedding_api_key) && !busy, [settings.api_key, settings.embedding_api_key, embeddingKeyRequired, busy]);
 
   async function ingestFiles(event: ChangeEvent<HTMLInputElement>) {
     const incoming = Array.from(event.target.files || []); if (!incoming.length) return;
@@ -34,11 +36,11 @@ export default function App() {
   return <main className="app-shell">
     <aside className="sidebar"><div className="brand"><span>✦</span><div><strong>Global RAG</strong><small>Multi-source assistant</small></div></div>
       <section><h2>Access</h2><label>Deployment access key<input type="password" value={settings.deployment_access_key} onChange={e => update({deployment_access_key:e.target.value})} placeholder="Required by hosted private deployments" /></label></section>
-      <section><h2>Model</h2><label>Provider<select value={settings.provider} onChange={e => update({provider:e.target.value as Settings["provider"]})}><option value="openai">OpenAI</option><option value="gemini">Google Gemini</option><option value="groq">Groq</option><option value="azure_openai">Azure OpenAI</option></select></label>
+      <section><h2>Model</h2><label>Provider<select value={settings.provider} onChange={e => { const provider = e.target.value as Settings["provider"]; update({provider, model:providerModels[provider]}); }}><option value="openai">OpenAI</option><option value="gemini">Google Gemini</option><option value="groq">Groq</option><option value="anthropic">Anthropic Claude</option><option value="mistral">Mistral AI</option><option value="openrouter">OpenRouter</option><option value="azure_openai">Azure OpenAI</option></select></label>
       <label>Model<input value={settings.model} onChange={e => update({model:e.target.value})} placeholder="gpt-4o-mini" /></label><label>API key<input type="password" value={settings.api_key} onChange={e => update({api_key:e.target.value})} placeholder="Stored only in this browser tab" /></label>
       {providerNeedsAzure && <><label>Azure endpoint<input value={settings.azure_endpoint || ""} onChange={e => update({azure_endpoint:e.target.value})} placeholder="https://resource.openai.azure.com" /></label><label>Deployment<input value={settings.azure_deployment || ""} onChange={e => update({azure_deployment:e.target.value})} /></label></>}
       <label>Embedding provider<select value={settings.embedding_provider} onChange={e => update({embedding_provider:e.target.value as Settings["embedding_provider"]})}><option value="openai">OpenAI embeddings</option><option value="gemini">Gemini embeddings</option><option value="huggingface">Hugging Face local embeddings</option></select></label>
-      {settings.embedding_provider === "huggingface" ? <label>Hugging Face model<input value={settings.embedding_model || ""} onChange={e => update({embedding_model:e.target.value})} placeholder="sentence-transformers/all-MiniLM-L6-v2" /></label> : <label>Embedding API key (optional)<input type="password" value={settings.embedding_api_key || ""} onChange={e => update({embedding_api_key:e.target.value})} placeholder="Needed when chat and embedding keys differ" /></label>}
+      {settings.embedding_provider === "huggingface" ? <label>Hugging Face model<input value={settings.embedding_model || ""} onChange={e => update({embedding_model:e.target.value})} placeholder="sentence-transformers/all-MiniLM-L6-v2" /></label> : <label>Embedding API key {embeddingKeyRequired ? "(required)" : "(optional)"}<input type="password" value={settings.embedding_api_key || ""} onChange={e => update({embedding_api_key:e.target.value})} placeholder={embeddingKeyRequired ? "Required because the chat key cannot create these embeddings" : "Needed when chat and embedding keys differ"} /></label>}
       </section>
       <section><h2>Retrieval</h2><label>Vector store<select value={settings.vector_store} onChange={e => update({vector_store:e.target.value as Settings["vector_store"]})}><option value="faiss">FAISS (local)</option><option value="chroma">Chroma (local)</option><option value="pinecone">Pinecone</option></select></label>
       {settings.vector_store === "pinecone" && <label>Index name<input value={settings.pinecone_index} onChange={e => update({pinecone_index:e.target.value})} /></label>}<label>Chunk size<input type="number" value={settings.chunk_size} onChange={e => update({chunk_size:Number(e.target.value)})}/></label></section>

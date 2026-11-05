@@ -1,10 +1,13 @@
 {
   "providers": [
     {"id": "openai", "label": "OpenAI", "defaultModel": "gpt-4o-mini", "needsEndpoint": false},
-    {"id": "gemini", "label": "Google Gemini", "defaultModel": "gemini-1.5-flash", "needsEndpoint": false},
+    {"id": "gemini", "label": "Google Gemini", "defaultModel": "gemini-3.1-flash-lite", "needsEndpoint": false},
     {"id": "groq", "label": "Groq", "defaultModel": "llama-3.1-8b-instant", "needsEndpoint": false},
+    {"id": "anthropic", "label": "Anthropic Claude", "defaultModel": "claude-sonnet-5-5", "needsEndpoint": false},
+    {"id": "mistral", "label": "Mistral AI", "defaultModel": "mistral-small-latest", "needsEndpoint": false},
+    {"id": "openrouter", "label": "OpenRouter", "defaultModel": "openrouter/auto", "needsEndpoint": false},
     {"id": "azure_openai", "label": "Azure OpenAI", "defaultModel": "gpt-4o-mini", "needsEndpoint": true}
   ],
   "vectorStores": ["faiss", "chroma", "pinecone"],
-  "acceptedFiles": ["pdf", "docx", "xlsx", "xls", "csv", "txt", "md", "png", "jpg", "jpeg", "webp"]
+  "acceptedFiles": ["pdf", "docx", "xlsx", "csv", "txt", "md", "png", "jpg", "jpeg", "webp"]
 }

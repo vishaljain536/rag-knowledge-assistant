@@ -19,14 +19,12 @@ def embeddings(provider: ProviderSettings):
     if provider.embedding_provider == "gemini":
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
         return GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=embedding_key)
-    if provider.provider in {"openai", "azure_openai"}:
+    if provider.embedding_provider == "openai":
         from langchain_openai import OpenAIEmbeddings, AzureOpenAIEmbeddings
         if provider.provider == "azure_openai":
             return AzureOpenAIEmbeddings(api_key=provider.api_key, azure_endpoint=provider.azure_endpoint, azure_deployment=provider.azure_deployment, api_version=provider.api_version)
-        return OpenAIEmbeddings(api_key=provider.api_key)
-    # Groq currently has no embedding endpoint; select OpenAI embeddings in the UI.
-    from langchain_openai import OpenAIEmbeddings
-    return OpenAIEmbeddings(api_key=embedding_key)
+        return OpenAIEmbeddings(api_key=embedding_key)
+    raise ValueError(f"Unsupported embedding provider: {provider.embedding_provider}")
 
 
 def split(documents: list[Document], index: IndexSettings) -> list[Document]:
