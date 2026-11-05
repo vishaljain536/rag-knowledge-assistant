@@ -19,7 +19,7 @@ This is a private, single-tenant deployment. It is protected by `APP_ACCESS_KEY`
 
 1. In Render, create a Blueprint from this GitHub repository.
 2. Render reads `render.yaml` and proposes one Docker web service with a 10 GB persistent disk.
-3. Set `CORS_ORIGINS` to the exact HTTPS URL of the Vercel production deployment. Update it after Vercel assigns the final URL if necessary.
+3. `CORS_ORIGINS` is preconfigured for `https://rag-knowledge-assistant-wine.vercel.app`. Change it if you assign a custom frontend domain.
 4. Keep the generated `APP_ACCESS_KEY` secret. Copy its value for use in the UI's **Deployment access key** field.
 5. Confirm the paid service and disk price shown by Render before applying the Blueprint.
 6. Wait for `GET /health` to return `{"status":"ok"}`.
