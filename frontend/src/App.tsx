@@ -16,11 +16,17 @@ export default function App() {
   const canChat = useMemo(() => !!settings.api_key && !busy, [settings.api_key, busy]);
 
   async function ingestFiles(event: ChangeEvent<HTMLInputElement>) {
-    const incoming = Array.from(event.target.files || []); if (!incoming.length) return; setFiles(old => [...old, ...incoming]); setBusy(true);
+    const incoming = Array.from(event.target.files || []); if (!incoming.length) return;
+    if (!settings.api_key) { setStatus("Enter your provider API key before adding sources."); return; }
+    setFiles(old => [...old, ...incoming]); setBusy(true);
     try { const result = await upload(sessionId, incoming, settings); setStatus(`Indexed ${result.chunks} passages from ${result.documents} file(s).`); }
     catch (error) { setStatus(error instanceof Error ? error.message : "Upload failed"); } finally { setBusy(false); }
   }
-  async function ingestUrl() { if (!url.trim()) return; setBusy(true); try { const result = await addUrl(sessionId, url, settings); setStatus(`Indexed ${result.chunks} passages from this webpage.`); setUrl(""); } catch (error) { setStatus(error instanceof Error ? error.message : "URL import failed"); } finally { setBusy(false); } }
+  async function ingestUrl() {
+    if (!url.trim()) return;
+    if (!settings.api_key) { setStatus("Enter your provider API key before adding sources."); return; }
+    setBusy(true); try { const result = await addUrl(sessionId, url, settings); setStatus(`Indexed ${result.chunks} passages from this webpage.`); setUrl(""); } catch (error) { setStatus(error instanceof Error ? error.message : "URL import failed"); } finally { setBusy(false); }
+  }
   async function send() { const question = input.trim(); if (!question || !canChat) return; setInput(""); setMessages(old => [...old, {role:"user", content:question}]); setBusy(true); try { const result = await ask(sessionId, question, settings); setMessages(old => [...old, {role:"assistant", content:result.answer, citations:result.citations}]); } catch (error) { setMessages(old => [...old, {role:"assistant", content:`**Error:** ${error instanceof Error ? error.message : "Request failed"}`}]); } finally { setBusy(false); } }
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }
 
@@ -36,7 +42,7 @@ export default function App() {
       {settings.vector_store === "pinecone" && <label>Index name<input value={settings.pinecone_index} onChange={e => update({pinecone_index:e.target.value})} /></label>}<label>Chunk size<input type="number" value={settings.chunk_size} onChange={e => update({chunk_size:Number(e.target.value)})}/></label></section>
       <p className="privacy">Keys are passed only to your configured backend. Do not use a shared deployment with secrets you do not control.</p></aside>
     <section className="chat"><header><div><p className="eyebrow">KNOWLEDGE WORKSPACE</p><h1>Ask your sources</h1><p className="subtitle">PDF · DOCX · Excel · CSV · text · web pages · images</p></div><span className={busy ? "status busy" : "status"}>{busy ? "Working" : "Ready"}</span></header>
-      <div className="source-bar"><button className="upload" onClick={() => fileInput.current?.click()} disabled={busy}>＋ Add files</button><input ref={fileInput} type="file" accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg,.webp" multiple hidden onChange={ingestFiles}/><div className="url-input"><input value={url} onChange={e => setUrl(e.target.value)} placeholder="Paste a public webpage URL"/><button onClick={ingestUrl} disabled={busy || !url.trim()}>Add URL</button></div></div>
+      <div className="source-bar"><button className="upload" onClick={() => fileInput.current?.click()} disabled={busy || !settings.api_key}>＋ Add files</button><input ref={fileInput} type="file" accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md,.png,.jpg,.jpeg,.webp" multiple hidden onChange={ingestFiles}/><div className="url-input"><input value={url} onChange={e => setUrl(e.target.value)} placeholder="Paste a public webpage URL"/><button onClick={ingestUrl} disabled={busy || !url.trim() || !settings.api_key}>Add URL</button></div></div>
       {files.length > 0 && <div className="chips">{files.map((file, i) => <span key={`${file.name}-${i}`}>▣ {file.name}</span>)}</div>}<p className="status-line">{status}</p>
       <div className="messages">{messages.length === 0 ? <div className="empty"><div className="empty-icon">⌁</div><h2>Build an answer from your own data</h2><p>Upload documents or add a web page, then ask a specific question.</p><div className="suggestions">{suggestions.map(s => <button key={s} onClick={() => setInput(s)}>{s}</button>)}</div></div> : messages.map((message, i) => <article className={`message ${message.role}`} key={i}><div className="avatar">{message.role === "user" ? "You" : "AI"}</div><div className="bubble"><ReactMarkdown>{message.content}</ReactMarkdown>{message.citations && <details><summary>Sources ({message.citations.length})</summary>{message.citations.map((c, j) => <div className="citation" key={j}><strong>[{j + 1}] {c.source}{c.page ? ` · page ${c.page}` : ""}</strong><p>{c.excerpt}</p></div>)}</details>}</div></article>)}</div>
       <footer><textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={onKeyDown} placeholder={settings.api_key ? "Ask a question about your sources…" : "Enter an API key to start…"} rows={2}/><button className="send" onClick={send} disabled={!input.trim() || !canChat}>Send ↗</button><small>Enter to send · Shift+Enter for a new line</small></footer>
