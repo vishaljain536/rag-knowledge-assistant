@@ -18,13 +18,17 @@ This is a private, single-tenant deployment. It is protected by `APP_ACCESS_KEY`
 ## 1. Deploy the backend on Render
 
 1. In Render, create a Blueprint from this GitHub repository.
-2. Render reads `render.yaml` and proposes one Docker web service with a 10 GB persistent disk.
+2. Render reads `render.yaml` and proposes one free Docker web service.
 3. `CORS_ORIGINS` is preconfigured for `https://rag-knowledge-assistant-wine.vercel.app`. Change it if you assign a custom frontend domain.
 4. Keep the generated `APP_ACCESS_KEY` secret. Copy its value for use in the UI's **Deployment access key** field.
-5. Confirm the paid service and disk price shown by Render before applying the Blueprint.
+5. Apply the Blueprint. No payment is required for the free plan.
 6. Wait for `GET /health` to return `{"status":"ok"}`.
 
-The service uses Python 3.12 and starts Uvicorn on Render's injected `PORT`. The disk stores SQLite, local indexes, and the Hugging Face model cache.
+The service uses Python 3.12 and starts Uvicorn on Render's injected `PORT`.
+
+### Free-plan limitations
+
+The free instance has an ephemeral filesystem and sleeps after 15 minutes of inactivity. Uploaded files, the SQLite conversation history, and local FAISS/Chroma indexes under `/tmp/rag-data` are lost on every restart, redeploy, or spin-down, and the first request after sleep takes about a minute. Re-upload sources after any restart. Use **Gemini chat + Gemini embeddings** on the free plan; local Hugging Face embeddings need more memory than the free instance provides. For durable storage, upgrade to a paid plan with a persistent disk (set `plan: starter` and re-add the `disk:` block with `DATA_DIR=/app/data`).
 
 ## 2. Deploy the frontend on Vercel
 

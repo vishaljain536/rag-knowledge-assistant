@@ -2,23 +2,21 @@ services:
   - type: web
     name: rag-knowledge-assistant-api
     runtime: docker
-    plan: starter
+    plan: free
     region: oregon
     dockerContext: ./backend
     dockerfilePath: ./backend/Dockerfile
     healthCheckPath: /health
     numInstances: 1
-    disk:
-      name: rag-data
-      mountPath: /app/data
-      sizeGB: 10
     envVars:
+      # Free instances have an ephemeral filesystem: uploaded files, the SQLite
+      # database, and local FAISS/Chroma indexes reset on every restart or spin-down.
       - key: DATABASE_URL
-        value: sqlite:////app/data/app.db
+        value: sqlite:////tmp/rag-data/app.db
       - key: DATA_DIR
-        value: /app/data
+        value: /tmp/rag-data
       - key: HF_HOME
-        value: /app/data/huggingface
+        value: /tmp/rag-data/huggingface
       - key: ENABLE_URL_INGESTION
         value: "false"
       - key: CORS_ORIGINS
