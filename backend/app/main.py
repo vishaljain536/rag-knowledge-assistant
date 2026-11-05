@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from .db import SessionLocal, init_db
 from .documents import extract_upload, extract_url
@@ -21,6 +22,15 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Global RAG Assistant API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=[x.strip() for x in settings.cors_origins.split(",")], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+
+def parse_form_settings(provider_json: str, index_json: str) -> tuple[ProviderSettings, IndexSettings]:
+    try:
+        return ProviderSettings.model_validate_json(provider_json), IndexSettings.model_validate_json(index_json)
+    except ValidationError as exc:
+        error = exc.errors()[0]
+        field = ".".join(str(part) for part in error.get("loc", ())) or "configuration"
+        raise HTTPException(status_code=422, detail=f"Invalid request configuration for {field}: {error['msg']}") from exc
 
 
 def db_session():
@@ -53,8 +63,7 @@ async def ingest_files(
     index_json: str = Form("{}"),
     files: list[UploadFile] = File(...),
 ):
-    provider = ProviderSettings.model_validate_json(provider_json)
-    index = IndexSettings.model_validate_json(index_json)
+    provider, index = parse_form_settings(provider_json, index_json)
     docs = []
     for file in files:
         content = await file.read()
