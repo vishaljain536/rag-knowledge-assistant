@@ -8,7 +8,6 @@ services:
     dockerfilePath: ./backend/Dockerfile
     healthCheckPath: /health
     numInstances: 1
-    maxShutdownDelaySeconds: 30
     disk:
       name: rag-data
       mountPath: /app/data
