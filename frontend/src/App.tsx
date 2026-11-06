@@ -5,7 +5,7 @@ import { addUrl, ask, createSession, listSessions, loadSession, previewLogin, up
 import { Icon } from "./Icons";
 import { Landscape } from "./Landscape";
 import { Brand, SignIn } from "./SignIn";
-import { applyTheme, readTheme, ThemePicker } from "./ThemePicker";
+import { applyTheme, readBackgroundMotion, readTheme, saveBackgroundMotion, ThemePicker } from "./ThemePicker";
 import { modelIssue, ModelSettings, providers } from "./ModelSettings";
 import { SourceLibrary, uploadIssue } from "./SourceLibrary";
 import type { Notice } from "./SourceLibrary";
@@ -103,6 +103,7 @@ function Message({ message }: { message: ChatMessage }) {
 
 export default function App() {
   const [theme, setTheme] = useState(readTheme);
+  const [motionEnabled, setMotionEnabled] = useState(readBackgroundMotion);
   const [settings, setSettings] = useState(defaults);
   const [token, setToken] = useState("");
   const [sessionId, setSessionId] = useState("");
@@ -328,6 +329,13 @@ export default function App() {
   </button>;
   const themeOverlay = panel === "theme" && <Overlay title="Choose a theme" description="Change the artwork and colors across your workspace." onDismiss={() => setPanel(null)}>
     <ThemePicker selected={theme} onChange={setTheme} />
+    <label className="theme-motion">
+      <input type="checkbox" checked={motionEnabled} onChange={event => {
+        setMotionEnabled(event.target.checked);
+        saveBackgroundMotion(event.target.checked);
+      }} />
+      <span><strong>Animate backgrounds</strong><small>Respects your device’s reduced motion setting.</small></span>
+    </label>
     <form className="overlay-footer" method="dialog"><button className="button primary">Done <Icon name="check" size={17} /></button></form>
   </Overlay>;
 
@@ -339,7 +347,8 @@ export default function App() {
   </>;
 
   if (!token) return <>
-    <SignIn busy={busy} notice={statusNotice} connect={access => void openSession(access)} signIn={signIn} themeControl={themeControl} />
+    <SignIn busy={busy} notice={statusNotice} connect={access => void openSession(access)} signIn={signIn}
+      themeControl={themeControl} theme={theme} motionEnabled={motionEnabled} />
     {themeOverlay}
   </>;
 
@@ -386,7 +395,7 @@ export default function App() {
         setShowLatest(!atBottom);
       }}>
         {!messages.length ? <section className="welcome" aria-labelledby="welcome-title">
-          <Landscape />
+          <Landscape theme={theme} motionEnabled={motionEnabled} />
           <p className="section-label"><Icon name="spark" size={15} /> Research workspace</p>
           <h2 id="welcome-title">Ask your<br /><em>sources.</em></h2>
           <p className="welcome-description">Find the passages that answer your questions.</p>

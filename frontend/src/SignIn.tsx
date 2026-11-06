@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icons";
 import { Landscape } from "./Landscape";
+import type { ThemeId } from "./ThemePicker";
 
 const localPreview = import.meta.env.DEV && ["localhost", "127.0.0.1"].includes(window.location.hostname) && window.location.port === "5173";
 
@@ -12,12 +13,14 @@ export function Brand() {
   </div>;
 }
 
-export function SignIn({ busy, notice, connect, signIn, themeControl }: {
+export function SignIn({ busy, notice, connect, signIn, themeControl, theme, motionEnabled }: {
   busy: boolean;
   notice: ReactNode;
   connect: (token: string) => void;
   signIn: (username: string, password: string) => Promise<boolean>;
   themeControl: ReactNode;
+  theme: ThemeId;
+  motionEnabled: boolean;
 }) {
   const [useToken, setUseToken] = useState(!localPreview);
   const [username, setUsername] = useState("");
@@ -25,7 +28,7 @@ export function SignIn({ busy, notice, connect, signIn, themeControl }: {
   const [workspaceToken, setWorkspaceToken] = useState("");
 
   return <div className="arrival">
-    <Landscape />
+    <Landscape theme={theme} motionEnabled={motionEnabled} />
     <header className="arrival-masthead">
       <Brand />
       <div className="masthead-actions">
