@@ -4,7 +4,7 @@ import { Icon } from "./Icons";
 import { Landscape } from "./Landscape";
 import type { ThemeId } from "./ThemePicker";
 
-const localPreview = import.meta.env.DEV && ["localhost", "127.0.0.1"].includes(window.location.hostname) && window.location.port === "5173";
+const localPreview = ["localhost", "127.0.0.1"].includes(window.location.hostname) && window.location.port === "5173";
 
 export function Brand() {
   return <div className="brand">
@@ -22,8 +22,8 @@ export function SignIn({ busy, notice, connect, signIn, themeControl, theme, mot
   theme: ThemeId;
   motionEnabled: boolean;
 }) {
-  const [useToken, setUseToken] = useState(!localPreview);
-  const [username, setUsername] = useState("");
+  const [useToken, setUseToken] = useState(true);
+  const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [workspaceToken, setWorkspaceToken] = useState("");
 
@@ -66,7 +66,7 @@ export function SignIn({ busy, notice, connect, signIn, themeControl, theme, mot
           {busy ? <span className="spinner" /> : <Icon name="arrow" size={17} />}
         </button>
         {localPreview && <button type="button" className="text-button" disabled={busy} onClick={() => setUseToken(!useToken)}>
-          {useToken ? "Use username and password" : "Use a workspace token instead"}
+          {useToken ? "Use admin login" : "Use a workspace token instead"}
         </button>}
       </form>
     </main>
