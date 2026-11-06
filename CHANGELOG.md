@@ -6,8 +6,7 @@
 
 - Three landscape themes with preview thumbnails and a preference that persists across visits. Moonlit Observatory and Ember Canyon use new original artwork.
 - Six-second landscape loops bring downhill water flow, lake reflections, aurora, and sweeping canyon sunlight to the sign-in screen and workspace welcome card. The Theme menu can turn background motion off, and the app uses still artwork for reduced motion.
-- An optional Three.js scene adds pointer-controlled parallax and depth to landscape backgrounds. The scene loads on interaction, renders while moving or resizing, and keeps the artwork static for touch, reduced-motion, or unsupported devices.
-- A cinematic sign-in screen and dark research workspace with original archive artwork. The loopback preview supports a fixed username and password when explicitly enabled on the API.
+- A cinematic sign-in screen and dark research workspace with original archive artwork. **Use admin login** offers an alternative to workspace tokens on loopback when enabled on the API.
 - An in-app documentation reader for the changelog, code walkthrough, overview, deployment instructions, and project guide. The views use the repository Markdown as their source and support shareable links.
 - A source library with drag-and-drop uploads, preflight file checks, and search for longer source lists. Answers have copy controls and expandable evidence passages.
 - Workspace bearer tokens, separate operator access for logs, server-issued session IDs, and workspace-scoped session and history APIs.
