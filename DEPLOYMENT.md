@@ -16,6 +16,8 @@ Use HTTPS between the browser and API on hosted deployments, restrict `CORS_ORIG
 2. Set the Vercel project's root to the repository root. [vercel.json](vercel.json) installs the frontend lockfile and publishes its production build. Use Node.js 24 and set `VITE_API_URL` to the HTTPS backend origin.
 3. Redeploy the frontend after changing any Vite build variable. Connect with the workspace token and verify file ingestion and chat with synthetic content.
 
+To enable **Use admin login** for a hosted demo, set `HOSTED_DEMO_ORIGIN` to the exact HTTPS frontend origin on Render, add it to `CORS_ORIGINS`, and set `HOSTED_DEMO_PASSWORD` as a Render secret. Set `VITE_ENABLE_HOSTED_DEMO_LOGIN=true` on Vercel and redeploy both services. The username is `admin`. The account opens a shared demo workspace for sample content and has no operator access.
+
 The frontend also bundles selected Markdown files from the repository root for the in-app documentation. For a standalone frontend Docker build, run `docker build -f frontend/Dockerfile .` from the repository root. Docker Compose already uses that context.
 
 The checked-in Render config stores SQLite and local FAISS/Chroma data in `/tmp/rag-data`, with an ephemeral filesystem. Use that configuration for disposable demos. Choose a persistent volume for a pilot with data that must survive restarts. Set both `DATA_DIR` and `DATABASE_URL` to the same volume. If using a bind mount, grant UID 10001 write access to the mounted directory. Keep one API worker while using this implementation's per-corpus process locks.

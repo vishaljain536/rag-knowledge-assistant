@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     workspace_tokens: dict[str, SecretStr] = Field(default_factory=dict)
     admin_token: SecretStr | None = None
     enable_local_demo_login: bool = False
+    hosted_demo_origin: str = ""
+    hosted_demo_password: SecretStr | None = None
     enable_url_ingestion: bool = False
     url_allowed_hosts: str = ""
     azure_allowed_endpoints: str = ""

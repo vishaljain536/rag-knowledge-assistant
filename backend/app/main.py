@@ -13,7 +13,7 @@ from sqlalchemy import select
 from starlette.datastructures import UploadFile
 
 from . import corpora
-from .access import authorize, demo_login, local_demo_allowed
+from .access import authorize, demo_login, hosted_demo_allowed, local_demo_allowed
 from .db import SessionLocal, init_db
 from .documents import MAX_FILES, MAX_FILE_BYTES, MAX_UPLOAD_BYTES, extract_upload
 from .errors import ApiError
@@ -93,12 +93,12 @@ async def request_boundary(request: Request, call_next):
     demo = request.method == "POST" and request.url.path == "/preview/login"
     try:
         if demo:
-            if local_demo_allowed(request):
+            if local_demo_allowed(request) or hosted_demo_allowed(request):
                 response = _body_limit(request)
                 if response is None:
                     response = await call_next(request)
             else:
-                response = _error(request, 404, "not_found", "Local preview sign-in is unavailable.")
+                response = _error(request, 404, "not_found", "Demo sign-in is unavailable.")
         elif not public:
             workspace = authorize(request, operator=operator)
             if workspace is None:
@@ -152,8 +152,8 @@ class DemoCredentials(BaseModel):
 
 
 @app.post("/preview/login", include_in_schema=False)
-def preview_login(credentials: DemoCredentials):
-    token = demo_login(credentials.username, credentials.password)
+def preview_login(request: Request, credentials: DemoCredentials):
+    token = demo_login(request, credentials.username, credentials.password)
     if token is None:
         raise ApiError(401, "invalid_credentials", "The username or password is incorrect.")
     return {"token": token}
