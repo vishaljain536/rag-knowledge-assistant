@@ -5,6 +5,7 @@ import { Landscape } from "./Landscape";
 import type { ThemeId } from "./ThemePicker";
 
 const localPreview = ["localhost", "127.0.0.1"].includes(window.location.hostname) && window.location.port === "5173";
+const hostedDemo = window.location.protocol === "https:" && import.meta.env.VITE_ENABLE_HOSTED_DEMO_LOGIN === "true";
 
 export function Brand() {
   return <div className="brand">
@@ -49,7 +50,7 @@ export function SignIn({ busy, notice, connect, signIn, themeControl, theme, mot
       }}>
         <div className="arrival-card-icon"><Icon name="lock" size={20} /></div>
         <h2>Enter the workspace</h2>
-        <p>{useToken ? "Use the access token from your workspace." : "Sign in to the local preview."}</p>
+        <p>{useToken ? "Use the access token from your workspace." : "Sign in to the demo workspace."}</p>
         {useToken ? <label>Workspace token
           <input type="password" autoComplete="off" placeholder="Paste your workspace token" value={workspaceToken} disabled={busy} onChange={event => setWorkspaceToken(event.target.value)} />
         </label> : <>
@@ -65,7 +66,7 @@ export function SignIn({ busy, notice, connect, signIn, themeControl, theme, mot
           {busy ? "Connecting…" : useToken ? "Connect workspace" : "Sign in"}
           {busy ? <span className="spinner" /> : <Icon name="arrow" size={17} />}
         </button>
-        {localPreview && <button type="button" className="text-button" disabled={busy} onClick={() => setUseToken(!useToken)}>
+        {(localPreview || hostedDemo) && <button type="button" className="text-button" disabled={busy} onClick={() => setUseToken(!useToken)}>
           {useToken ? "Use admin login" : "Use a workspace token instead"}
         </button>}
       </form>

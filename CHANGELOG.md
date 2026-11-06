@@ -4,6 +4,8 @@
 
 ### Added
 
+- Hosted demos can opt into admin sign-in using a server-side password and a separate demo workspace.
+
 - Three landscape themes with preview thumbnails and a preference that persists across visits. Moonlit Observatory and Ember Canyon use new original artwork.
 - Six-second landscape loops bring downhill water flow, lake reflections, aurora, and sweeping canyon sunlight to the sign-in screen and workspace welcome card. The Theme menu can turn background motion off, and the app uses still artwork for reduced motion.
 - A cinematic sign-in screen and dark research workspace with original archive artwork. **Use admin login** offers an alternative to workspace tokens on loopback when enabled on the API.

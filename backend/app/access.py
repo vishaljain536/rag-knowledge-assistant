@@ -10,6 +10,7 @@ from .settings import TOKEN_PATTERN, settings
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _DEMO_WORKSPACE = "_local-demo"
 _DEMO_TOKEN = token_urlsafe(32)
+_HOSTED_DEMO_TOKEN = token_urlsafe(32)
 
 
 def local_demo_allowed(request: Request) -> bool:
@@ -23,10 +24,27 @@ def local_demo_allowed(request: Request) -> bool:
     )
 
 
-def demo_login(username: str, password: str) -> str | None:
+def hosted_demo_allowed(request: Request) -> bool:
+    origin = settings.hosted_demo_origin
+    password = settings.hosted_demo_password
+    return bool(
+        password and password.get_secret_value()
+        and origin.startswith("https://")
+        and request.headers.get("origin") == origin
+    )
+
+
+def demo_login(request: Request, username: str, password: str) -> str | None:
     valid_user = hmac.compare_digest(username.encode(), b"admin")
-    valid_password = hmac.compare_digest(password.encode(), b"BBRVY5")
-    return _DEMO_TOKEN if valid_user and valid_password else None
+    if local_demo_allowed(request):
+        expected_password, token = "BBRVY5", _DEMO_TOKEN
+    elif hosted_demo_allowed(request) and settings.hosted_demo_password is not None:
+        expected_password = settings.hosted_demo_password.get_secret_value()
+        token = _HOSTED_DEMO_TOKEN
+    else:
+        return None
+    valid_password = hmac.compare_digest(password.encode(), expected_password.encode())
+    return token if valid_user and valid_password else None
 
 
 def _digest(token: str) -> bytes:
@@ -45,6 +63,8 @@ def authorize(request: Request, *, operator: bool) -> str | None:
         return None
     if local_demo_allowed(request) and hmac.compare_digest(received, _digest(_DEMO_TOKEN)):
         return _DEMO_WORKSPACE
+    if hosted_demo_allowed(request) and hmac.compare_digest(received, _digest(_HOSTED_DEMO_TOKEN)):
+        return "_hosted-demo"
     match = None
     for workspace, configured in settings.workspace_tokens.items():
         if hmac.compare_digest(received, _digest(configured.get_secret_value())):
