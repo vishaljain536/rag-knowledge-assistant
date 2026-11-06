@@ -8,6 +8,7 @@ const themes = [
 
 export type ThemeId = (typeof themes)[number]["id"];
 const storageKey = "global-rag-theme";
+const motionKey = "global-rag-background-motion";
 
 export function readTheme(): ThemeId {
   try {
@@ -26,6 +27,22 @@ export function applyTheme(theme: ThemeId) {
     localStorage.setItem(storageKey, theme);
   } catch {
     // The theme stays active for this visit when browser storage is unavailable.
+  }
+}
+
+export function readBackgroundMotion() {
+  try {
+    return localStorage.getItem(motionKey) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+export function saveBackgroundMotion(enabled: boolean) {
+  try {
+    localStorage.setItem(motionKey, enabled ? "on" : "off");
+  } catch {
+    // The current visit still uses the selected motion setting.
   }
 }
 

@@ -18,7 +18,13 @@ The transcript follows new messages while the reader is near the bottom. When th
 
 The local Vite preview at port 5173 can exchange a fixed username and password for a process-scoped bearer token through `POST /preview/login`. The API enables that endpoint only with `ENABLE_LOCAL_DEMO_LOGIN=true` and requires a loopback request. The token opens an isolated workspace. Hosted builds use workspace tokens.
 
-[ThemePicker.tsx](frontend/src/ThemePicker.tsx) stores the selected theme locally and sets the palette at the document root. The sign-in screen, workspace, and documentation share those colors. [Landscape.tsx](frontend/src/Landscape.tsx) keeps the background visible in CSS and loads [landscapeMotion.ts](frontend/src/landscapeMotion.ts) on the first pointer movement for compatible devices. The Three.js layer draws the points in one batch, caps the drawing buffer, and stops when the scene settles. It disposes the renderer when the landscape is removed or reduced motion is enabled.
+[ThemePicker.tsx](frontend/src/ThemePicker.tsx) stores the selected theme and motion preference locally and sets the palette at the document root. The sign-in screen, workspace, and documentation share those colors.
+
+[Landscape.tsx](frontend/src/Landscape.tsx) uses the still WebP as its base layer. When the landscape is visible and motion is allowed, it loads the selected theme’s muted MP4 and reveals it once playback starts. Playback pauses when the background scrolls out of view or the tab is hidden. The still remains available if video playback fails. **Animate backgrounds** in the Theme menu turns off video and pointer effects together; the device’s reduced motion setting takes precedence.
+
+The video is separate from the optional Three.js layer. On the first pointer movement on supported devices, [landscapeMotion.ts](frontend/src/landscapeMotion.ts) adds parallax and depth. It draws the points in one batch, caps the drawing buffer, stops rendering when the scene settles, and releases the renderer when motion is turned off or the landscape unmounts.
+
+To regenerate the loops with Node.js and FFmpeg on your PATH, run `node frontend/scripts/render-landscape-loops.mjs <gif-output-directory>` from the repository root. You can append theme IDs to render only those themes. The [render script](frontend/scripts/render-landscape-loops.mjs) moves a repeating foam texture downhill within the waterfall and river. Moonlit Observatory uses small displacements to ripple the lake reflections. Ember Canyon sweeps light across the far cliffs and near arches, where drifting dust remains visible in a narrower crop. Each loop lasts six seconds. The script writes MP4s to the app’s public assets and GIFs to the directory you supply.
 
 ## In-app documentation
 
