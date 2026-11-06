@@ -2,6 +2,8 @@
 
 > Do not expose the current application to untrusted users before completing Tasks 1–6 and the relevant verification in Task 9.
 
+The current private-pilot implementation and its verification are documented in [the changelog](../../../CHANGELOG.md) and [the code walkthrough](../../../CODE_WALKTHROUGH.md). The checklist below describes the wider production design. The current release uses a combined corpus and conversation session, workspace bearer tokens, separate versioned tables with a documented fresh-start upgrade, and HTTPS imports that reject redirects. A migration framework, live provider and image verification, and a shared multi-worker release still require separate work.
+
 - [ ] 1. Select the authentication and deployment mode
   - Confirm whether the first hardened release is a private single-tenant service or an authenticated multi-user service.
   - Approve the identity mechanism, token/header verification rules, server-managed provider-key policy, and data-retention owner.

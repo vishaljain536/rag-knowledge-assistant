@@ -1,56 +1,43 @@
 # Deployment
 
-The supported hosted topology is:
+Use one FastAPI process for a private pilot. The frontend can be served from Vercel or from the Docker image built by Compose. Workspace tokens control access to corpus data. Members sharing a workspace token share that workspace's sessions and transcripts.
 
-- React/Vite frontend on Vercel.
-- FastAPI backend on one free Render Docker instance.
-- SQLite and local FAISS/Chroma data on the ephemeral `/tmp/rag-data` path.
+## Configure workspace access
 
-The API has no login. Anyone with the backend URL can call it, but every request needs the caller's own model-provider key, so usage is billed to whoever sends the request.
+Set `WORKSPACE_TOKENS` as a JSON object mapping stable workspace slugs to separate, randomly generated tokens. Generate each token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Enter the raw JSON in a hosting environment panel or wrap it in single quotes in a local `.env` file. An empty mapping leaves the API unavailable to workspace users.
 
-## Safety defaults
+Set a different `ADMIN_TOKEN` to enable operator access to `/logs` and `/logs/stream`. Provider keys are supplied per request and used for the selected provider. Keep workspace tokens, operator tokens and provider keys out of repository files and frontend build variables. Rotate a token by changing its value and retaining the same workspace slug. Removing a slug disables access to that workspace.
 
-- Hosted URL ingestion is disabled because the current URL fetcher is not yet hardened against SSRF. File ingestion remains available.
-- Session identifiers must be canonical UUIDs before they can reach database or vector-index paths.
-- The backend accepts only the configured Vercel origin through CORS.
-- Use one backend instance while using SQLite and local vector indexes.
+Use HTTPS between the browser and API on hosted deployments, restrict `CORS_ORIGINS` to the frontend origins, and apply connection and request-rate limits at the ingress. `GET /health` is public liveness. `GET /ready` checks database connectivity and the data directory with a workspace token.
 
-## 1. Deploy the backend on Render
+## Deploy on Render and Vercel
 
-1. In Render, create a Blueprint from this GitHub repository.
-2. Render reads `render.yaml` and proposes one free Docker web service.
-3. `CORS_ORIGINS` is preconfigured for `https://rag-knowledge-assistant-wine.vercel.app`. Change it if you assign a custom frontend domain.
-4. Apply the Blueprint. No payment is required for the free plan.
-5. Wait for `GET /health` to return `{"status":"ok"}`.
+1. Create the backend using [render.yaml](render.yaml). Supply the required `WORKSPACE_TOKENS` secret and set `CORS_ORIGINS` to the exact deployed Vercel origin. Wait for the Render health check to pass.
+2. Set the Vercel project's root to the repository root. [vercel.json](vercel.json) installs the frontend lockfile and publishes its production build. Use Node.js 24 and set `VITE_API_URL` to the HTTPS backend origin.
+3. Redeploy the frontend after changing any Vite build variable. Connect with the workspace token and verify file ingestion and chat with synthetic content.
 
-The service uses Python 3.12 and starts Uvicorn on Render's injected `PORT`.
+The frontend also bundles selected Markdown files from the repository root for the in-app documentation. For a standalone frontend Docker build, run `docker build -f frontend/Dockerfile .` from the repository root. Docker Compose already uses that context.
 
-### Free-plan limitations
+The checked-in Render config stores SQLite and local FAISS/Chroma data in `/tmp/rag-data`, with an ephemeral filesystem. Use that configuration for disposable demos. Choose a persistent volume for a pilot with data that must survive restarts. Set both `DATA_DIR` and `DATABASE_URL` to the same volume. If using a bind mount, grant UID 10001 write access to the mounted directory. Keep one API worker while using this implementation's per-corpus process locks.
 
-The free instance has an ephemeral filesystem and sleeps after 15 minutes of inactivity. Uploaded files, the SQLite conversation history, and local FAISS/Chroma indexes under `/tmp/rag-data` are lost on every restart, redeploy, or spin-down, and the first request after sleep takes about a minute. Re-upload sources after any restart. Use **Gemini chat + Gemini embeddings** on the free plan; local Hugging Face embeddings need more memory than the free instance provides. For durable storage, upgrade to a paid plan with a persistent disk (set `plan: starter` and re-add the `disk:` block with `DATA_DIR=/app/data`).
+## Optional features
 
-## 2. Deploy the frontend on Vercel
+- **URL ingestion.** Set `ENABLE_URL_INGESTION=true` and configure comma-separated exact HTTPS hostnames in `URL_ALLOWED_HOSTS`. Enable the UI with `VITE_ENABLE_URL_INGESTION=true` at build time. URLs must resolve exclusively to public addresses and return HTML or plain text directly over HTTPS. The importer skips redirects and limits response size. Keep network egress restrictions in place on hosted deployments. [OWASP SSRF prevention guidance](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)
+- **Azure OpenAI.** Add exact HTTPS resource origins to `AZURE_ALLOWED_ENDPOINTS`, comma separated. Enter that resource origin and the chat and embedding deployment names in the UI as applicable. Use operator-approved endpoints and network egress policy.
+- **Pinecone.** Set `PINECONE_API_KEY` and `PINECONE_INDEX` on the API. Provision an index whose dimension matches the selected embedding model. A corpus namespace is derived from its server-issued ID. Changing the configured Pinecone index requires rebuilding affected corpora.
+- **Hugging Face.** The default container includes API embeddings. For CPU embeddings in a native installation, use the optional requirements file and set `HUGGINGFACE_ALLOWED_MODELS` to approved model IDs. Budget memory for model loading.
 
-1. Import the same GitHub repository into Vercel.
-2. Keep the repository root as the project root; `vercel.json` runs the build in `frontend/` and publishes `frontend/dist`.
-3. Add production environment variable:
+## Upgrading from the prototype
 
-   ```text
-   VITE_API_URL=https://YOUR-RENDER-SERVICE.onrender.com
-   ```
+1. Stop ingestion and back up the old database and data directory. The v2 API creates new `rag_*` tables and stores local indexes in `corpora/`. It leaves the old tables and indexes available for offline backup or export.
+2. Configure a workspace token and create a new session from the UI. Re-upload original files to build an index for the selected embedding model. Old browser IDs did not prove ownership, so v2 does not assign those sessions automatically. The previous FAISS snapshots use a legacy serialization format and the app will not load them.
+3. When using Compose, the new named volume starts fresh. For later releases, back up the database and corpus directory together during a maintenance window with the API stopped. Restore a matching pair and run the upload-and-query smoke test.
 
-4. Leave `VITE_ENABLE_URL_INGESTION` unset. Hosted URL ingestion must remain hidden until the SSRF-safe fetcher is implemented.
-5. Deploy. If the backend CORS value was a placeholder, replace `CORS_ORIGINS` on Render with this exact Vercel URL and redeploy the backend.
+The app stores extracted passages in its indexes, plus source labels, excerpts and messages. Keep the original files if future re-indexing matters. For a private pilot, set a retention policy for the live volume, backups and any Pinecone namespaces before accepting sensitive data. Use the workspace operator to coordinate removal across those stores.
 
-## 3. Use the application
+## Release checks
 
-1. Open the Vercel URL.
-2. Enter an LLM provider key. Keys stay in React memory for the current tab and are sent to the configured backend per request.
-3. Upload files and ask questions.
-
-## Operational limits
-
-- Do not scale beyond one backend instance with SQLite/local indexes.
-- Local Hugging Face embeddings consume more memory and have a slower first request. API embeddings use less backend memory.
-- Do not expose URL ingestion by setting `ENABLE_URL_INGESTION=true` until redirect-aware SSRF validation and response-size limits are implemented.
-- There is no authentication. Session IDs are random UUIDs, but anyone who learns one can read that session's chat history through `/conversations/{session_id}`.
+1. Run the backend test suite and the frontend production build. Build and start the actual Docker images in the target environment and verify `/health` and authenticated `/ready`.
+2. With a test workspace, ingest two synthetic files in separate requests and retrieve a fact from each. Try a duplicate upload, then reload and reconnect to verify history and source restoration.
+3. Repeat the ingest and query with each provider/store combination you intend to enable. Confirm that a token from a different workspace cannot open or search the test session. Verify network egress and check that neither logs nor error responses contain credentials.
+4. Verify a backup and restore before a persistent pilot. A deployment requiring multiple API workers needs cross-worker write coordination and shared storage before scaling.

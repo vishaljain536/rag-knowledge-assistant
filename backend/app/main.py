@@ -1,68 +1,133 @@
-import json
 import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Path, Query, Request, UploadFile
+
+from anyio import CapacityLimiter, WouldBlock
+from fastapi import FastAPI, Query, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import ValidationError
-from sqlalchemy.orm import Session
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import select
+from starlette.datastructures import UploadFile
+
+from . import corpora
+from .access import authorize, demo_login, local_demo_allowed
 from .db import SessionLocal, init_db
-from .documents import extract_upload, extract_url
-from .graph import run_rag
-from .models import Conversation, Message
+from .documents import MAX_FILES, MAX_FILE_BYTES, MAX_UPLOAD_BYTES, extract_upload
+from .errors import ApiError
 from .operational_logs import log_event, reset_request_id, set_request_id, store as log_store, stream_events
-from .rag import build_index
-from .schemas import ChatRequest, ChatResponse, IndexSettings, IngestUrlRequest, ProviderSettings, SESSION_ID_PATTERN
+from .schemas import CONFIG_ERRORS, ChatRequest, ChatResponse, IndexSettings, IngestForm, IngestUrlRequest, ProviderSettings, SessionId
 from .settings import settings
+from .web_sources import extract_url
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(application: FastAPI):
     init_db()
+    application.state.ingest_slots = CapacityLimiter(4)
     log_event("info", "app.started", "Backend application started")
     yield
     log_event("info", "app.stopped", "Backend application stopped")
 
 
-app = FastAPI(title="Global RAG Assistant API", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="Global RAG Assistant API", version="2.0.0", lifespan=lifespan)
 
 
-def _route_label(request: Request) -> str:
-    route = request.scope.get("route")
-    if route and getattr(route, "path", None):
-        return route.path
-    if request.url.path.startswith("/conversations/"):
-        return "/conversations/{session_id}"
-    return request.url.path
+def _error(request: Request, status: int, code: str, message: str) -> JSONResponse:
+    headers = {"WWW-Authenticate": "Bearer"} if status == 401 else None
+    return JSONResponse(
+        {"code": code, "detail": message, "request_id": request.state.request_id},
+        status_code=status, headers=headers,
+    )
+
+
+@app.exception_handler(ApiError)
+async def expected_error(request: Request, exc: ApiError):
+    return _error(request, exc.status_code, exc.code, exc.detail)
+
+
+def _validation_error(exc: RequestValidationError | ValidationError) -> ApiError:
+    # User input is present in both error types, including the whole provider object.
+    first = exc.errors()[0]
+    if first["type"] in CONFIG_ERRORS:
+        return ApiError(422, "invalid_request", CONFIG_ERRORS[first["type"]])
+    location = first.get("loc", ())
+    field = location[-1] if location else None
+    if field in {"session_id", "question", "model", "api_key", "chunk_size", "chunk_overlap", "url"}:
+        return ApiError(422, "invalid_request", f"Check the value for {field}.")
+    return ApiError(422, "invalid_request", "Check the request fields and provider configuration.")
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request: Request, exc: RequestValidationError):
+    return await expected_error(request, _validation_error(exc))
+
+
+def _body_limit(request: Request) -> JSONResponse | None:
+    if request.method != "POST":
+        return None
+    if request.headers.get("Transfer-Encoding") or "Content-Length" not in request.headers:
+        return _error(request, 411, "length_required", "Send a request with a known content length.")
+    try:
+        length = int(request.headers["Content-Length"])
+    except ValueError:
+        return _error(request, 400, "invalid_length", "The content length is invalid.")
+    if length < 0:
+        return _error(request, 400, "invalid_length", "The content length is invalid.")
+    maximum = MAX_UPLOAD_BYTES + 1024 * 1024 if request.url.path == "/ingest/files" else 256 * 1024
+    if length > maximum:
+        return _error(request, 413, "request_too_large", "The request exceeds the upload limit.")
+    return None
 
 
 @app.middleware("http")
-async def operational_logging(request: Request, call_next):
+async def request_boundary(request: Request, call_next):
     request_id = str(uuid4())
     token = set_request_id(request_id)
     request.state.request_id = request_id
     started = time.perf_counter()
+    operator = request.url.path.rstrip("/") in {"/logs", "/logs/stream"}
+    public = request.method == "GET" and request.url.path == "/health"
+    demo = request.method == "POST" and request.url.path == "/preview/login"
     try:
-        response = await call_next(request)
+        if demo:
+            if local_demo_allowed(request):
+                response = _body_limit(request)
+                if response is None:
+                    response = await call_next(request)
+            else:
+                response = _error(request, 404, "not_found", "Local preview sign-in is unavailable.")
+        elif not public:
+            workspace = authorize(request, operator=operator)
+            if workspace is None:
+                response = _error(request, 401, "unauthorized", "A valid access token is required.")
+            else:
+                request.state.workspace = workspace
+                response = _body_limit(request)
+                if response is None:
+                    response = await call_next(request)
+        else:
+            response = await call_next(request)
     except Exception as exc:
-        if not request.url.path.startswith("/logs"):
-            log_event("error", "http.failed", "Request failed before a response was produced", method=request.method, route=_route_label(request), error_type=type(exc).__name__)
+        # An SDK exception may include a credential or provider request payload.
+        log_event("error", "http.failed", "Request failed before a response was produced", error_type=type(exc).__name__)
+        response = _error(request, 500, "internal_error", "The request could not be completed.")
+    finally:
         reset_request_id(token)
-        raise
 
     response.headers["X-Request-ID"] = request_id
-    if not request.url.path.startswith("/logs"):
+    if not public:
+        response.headers["Cache-Control"] = "no-store"
+    if not operator:
+        route = getattr(request.scope.get("route"), "path", "unmatched")
         log_event(
             "info" if response.status_code < 400 else "warning",
-            "http.completed",
-            "Request completed",
-            method=request.method,
-            route=_route_label(request),
-            status=response.status_code,
+            "http.completed", "Request completed", request_id=request_id,
+            method=request.method, route=route, status=response.status_code,
             duration_ms=round((time.perf_counter() - started) * 1000, 1),
         )
-    reset_request_id(token)
     return response
 
 
@@ -71,41 +136,36 @@ app.add_middleware(
     allow_origins=[x.strip() for x in settings.cors_origins.split(",")],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Authorization", "Content-Type"],
     expose_headers=["X-Request-ID"],
 )
-
-
-def parse_form_settings(provider_json: str, index_json: str) -> tuple[ProviderSettings, IndexSettings]:
-    try:
-        return ProviderSettings.model_validate_json(provider_json), IndexSettings.model_validate_json(index_json)
-    except ValidationError as exc:
-        error = exc.errors()[0]
-        field = ".".join(str(part) for part in error.get("loc", ())) or "configuration"
-        raise HTTPException(status_code=422, detail=f"Invalid request configuration for {field}: {error['msg']}") from exc
-
-
-def db_session():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-def save_message(db: Session, session_id: str, role: str, content: str, citations: list | None = None):
-    conversation = db.query(Conversation).filter_by(session_id=session_id).first()
-    if not conversation:
-        conversation = Conversation(session_id=session_id, title=content[:80])
-        db.add(conversation)
-        db.flush()
-    db.add(Message(conversation_id=conversation.id, role=role, content=content, citations_json=json.dumps(citations or [])))
-    db.commit()
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+class DemoCredentials(BaseModel):
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=128)
+
+
+@app.post("/preview/login", include_in_schema=False)
+def preview_login(credentials: DemoCredentials):
+    token = demo_login(credentials.username, credentials.password)
+    if token is None:
+        raise ApiError(401, "invalid_credentials", "The username or password is incorrect.")
+    return {"token": token}
+
+
+@app.get("/ready")
+def ready():
+    with SessionLocal() as db:
+        db.execute(select(1))
+    if not settings.data_dir.is_dir():
+        raise ApiError(503, "storage_unavailable", "The corpus storage directory is unavailable.")
+    return {"status": "ready"}
 
 
 @app.get("/logs")
@@ -118,71 +178,90 @@ def logs(after: int = Query(default=0, ge=0), limit: int = Query(default=100, ge
 async def logs_stream(request: Request, after: int = Query(default=0, ge=0), replay: int = Query(default=50, ge=1, le=100)):
     return StreamingResponse(
         stream_events(request, after=after, replay=replay),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache, no-store", "X-Accel-Buffering": "no"},
+        media_type="text/event-stream", headers={"X-Accel-Buffering": "no"},
     )
 
 
+@app.post("/sessions", status_code=201)
+def create_session(request: Request):
+    return corpora.create_session(request.state.workspace)
+
+
+@app.get("/sessions")
+def list_sessions(request: Request):
+    return corpora.list_sessions(request.state.workspace)
+
+
+@app.get("/sessions/{session_id}")
+def session_state(request: Request, session_id: SessionId):
+    return corpora.session_state(request.state.workspace, session_id)
+
+
+def _ingest_files(workspace: str, session_id: str, provider: ProviderSettings, index: IndexSettings | None, files: list[UploadFile]):
+    def extract():
+        sources = []
+        total = 0
+        for file in files:
+            content = file.file.read(MAX_FILE_BYTES + 1)
+            total += len(content)
+            if total > MAX_UPLOAD_BYTES:
+                raise ApiError(413, "request_too_large", "Files may total at most 48 MiB per upload.")
+            sources.append(extract_upload(file.filename or "", content))
+        return sources
+
+    return corpora.ingest(workspace, session_id, provider, index, extract)
+
+
 @app.post("/ingest/files")
-async def ingest_files(
-    request: Request,
-    session_id: str = Form(..., pattern=SESSION_ID_PATTERN),
-    provider_json: str = Form(...),
-    index_json: str = Form("{}"),
-    files: list[UploadFile] = File(...),
-):
-    provider, index = parse_form_settings(provider_json, index_json)
-    log_event("info", "ingest.started", "File ingestion started", files=len(files), provider=provider.provider, embedding_provider=provider.embedding_provider, vector_store=index.vector_store)
-    docs = []
-    for file in files:
-        content = await file.read()
-        if len(content) > 25 * 1024 * 1024:
-            log_event("warning", "ingest.rejected", "File exceeded the upload limit", reason="file_too_large")
-            raise HTTPException(413, f"{file.filename} is over the 25 MB upload limit.")
-        docs.extend(extract_upload(file.filename or "upload", content))
+async def ingest_files(request: Request):
+    limiter = request.app.state.ingest_slots
     try:
-        chunks = build_index(session_id, docs, provider, index)
-        log_event("info", "ingest.completed", "File ingestion completed", documents=len(docs), chunks=chunks)
-        return {"documents": len(docs), "chunks": chunks}
-    except Exception as exc:
-        log_event("error", "ingest.failed", "File ingestion failed", error_type=type(exc).__name__)
-        raise HTTPException(400, f"Indexing failed. Request ID: {request.state.request_id}") from exc
+        limiter.acquire_nowait()
+    except WouldBlock as exc:
+        raise ApiError(429, "ingest_busy", "Too many imports are running. Try again shortly.") from exc
+    try:
+        async with request.form(max_files=MAX_FILES, max_fields=3, max_part_size=32 * 1024) as form:
+            files = form.getlist("files")
+            if not files or any(not isinstance(file, UploadFile) for file in files):
+                raise ApiError(422, "files_required", "Select one or more supported files.")
+            for file in files:
+                if file.size is not None and file.size > MAX_FILE_BYTES:
+                    raise ApiError(413, "file_too_large", "Each file must be at most 25 MiB.")
+            try:
+                # This small form model validates the UUID and hides raw multipart inputs in errors.
+                values = IngestForm.model_validate(dict(form))
+                provider = ProviderSettings.model_validate_json(values.provider_json)
+                index = IndexSettings.model_validate_json(values.index_json) if values.index_json else None
+            except ValidationError as exc:
+                raise _validation_error(exc) from exc
+            return await run_in_threadpool(_ingest_files, request.state.workspace, values.session_id, provider, index, files)
+    finally:
+        limiter.release()
 
 
 @app.post("/ingest/url")
 async def ingest_url(payload: IngestUrlRequest, request: Request):
     if not settings.enable_url_ingestion:
-        raise HTTPException(status_code=503, detail="URL ingestion is disabled on this deployment.")
-    log_event("info", "url_ingest.started", "URL ingestion started", provider=payload.provider.provider, embedding_provider=payload.provider.embedding_provider, vector_store=payload.index.vector_store)
+        raise ApiError(503, "url_disabled", "URL ingestion is disabled on this deployment.")
+    limiter = request.app.state.ingest_slots
     try:
-        docs = await extract_url(payload.url)
-        chunks = build_index(payload.session_id, docs, payload.provider, payload.index)
-        log_event("info", "url_ingest.completed", "URL ingestion completed", documents=len(docs), chunks=chunks)
-        return {"documents": len(docs), "chunks": chunks}
-    except Exception as exc:
-        log_event("error", "url_ingest.failed", "URL ingestion failed", error_type=type(exc).__name__)
-        raise HTTPException(400, f"URL ingestion failed. Request ID: {request.state.request_id}") from exc
+        limiter.acquire_nowait()
+    except WouldBlock as exc:
+        raise ApiError(429, "ingest_busy", "Too many imports are running. Try again shortly.") from exc
+    try:
+        return await run_in_threadpool(
+            corpora.ingest, request.state.workspace, payload.session_id, payload.provider, payload.index,
+            lambda: [extract_url(payload.url)],
+        )
+    finally:
+        limiter.release()
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(payload: ChatRequest, request: Request, db: Session = Depends(db_session)):
-    log_event("info", "chat.started", "Chat request started", provider=payload.provider.provider, embedding_provider=payload.provider.embedding_provider, vector_store=payload.index.vector_store)
-    try:
-        save_message(db, payload.session_id, "user", payload.question)
-        answer, citations = run_rag(payload)
-        serialised = [citation.model_dump() for citation in citations]
-        save_message(db, payload.session_id, "assistant", answer, serialised)
-        log_event("info", "chat.completed", "Chat request completed", citations=len(citations))
-        return ChatResponse(answer=answer, citations=citations)
-    except Exception as exc:
-        log_event("error", "chat.failed", "Chat request failed", error_type=type(exc).__name__)
-        raise HTTPException(400, f"Chat failed. Request ID: {request.state.request_id}") from exc
+def chat(payload: ChatRequest, request: Request):
+    return corpora.chat(request.state.workspace, payload)
 
 
 @app.get("/conversations/{session_id}")
-def conversations(session_id: str = Path(..., pattern=SESSION_ID_PATTERN), db: Session = Depends(db_session)):
-    conversation = db.query(Conversation).filter_by(session_id=session_id).first()
-    if not conversation:
-        return []
-    rows = db.query(Message).filter_by(conversation_id=conversation.id).order_by(Message.id).all()
-    return [{"role": row.role, "content": row.content, "citations": json.loads(row.citations_json)} for row in rows]
+def conversations(session_id: SessionId, request: Request):
+    return corpora.conversation(request.state.workspace, session_id)

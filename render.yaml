@@ -10,7 +10,7 @@ services:
     numInstances: 1
     envVars:
       # Free instances have an ephemeral filesystem: uploaded files, the SQLite
-      # database, and local FAISS/Chroma indexes reset on every restart or spin-down.
+      # database and local FAISS/Chroma indexes may reset on a restart or spin-down.
       - key: DATABASE_URL
         value: sqlite:////tmp/rag-data/app.db
       - key: DATA_DIR
@@ -19,5 +19,7 @@ services:
         value: /tmp/rag-data/huggingface
       - key: ENABLE_URL_INGESTION
         value: "false"
+      - key: WORKSPACE_TOKENS
+        sync: false
       - key: CORS_ORIGINS
         value: https://rag-knowledge-assistant-wine.vercel.app

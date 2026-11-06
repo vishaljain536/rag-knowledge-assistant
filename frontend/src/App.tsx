@@ -1,238 +1,456 @@
-import { ChangeEvent, KeyboardEvent, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
-import { addUrl, ask, upload } from "./api";
-import type { ChatMessage, Settings } from "./types";
+import { addUrl, ask, createSession, listSessions, loadSession, previewLogin, upload } from "./api";
+import { Icon } from "./Icons";
+import { Landscape } from "./Landscape";
+import { Brand, SignIn } from "./SignIn";
+import { applyTheme, readTheme, ThemePicker } from "./ThemePicker";
+import { modelIssue, ModelSettings, providers } from "./ModelSettings";
+import { SourceLibrary, uploadIssue } from "./SourceLibrary";
+import type { Notice } from "./SourceLibrary";
+import type { ChatMessage, CorpusProfile, SessionState, SessionSummary, Settings, Source } from "./types";
 
-const providerModels: Record<Settings["provider"], string> = {
-  openai: "gpt-4o-mini",
-  gemini: "gemini-3.1-flash-lite",
-  groq: "llama-3.1-8b-instant",
-  anthropic: "claude-sonnet-5-5",
-  mistral: "mistral-small-latest",
-  openrouter: "openrouter/auto",
-  azure_openai: "gpt-4o-mini",
-};
-
+const DocsView = lazy(() => import("./DocsView"));
 const defaults: Settings = {
   provider: "openai",
-  model: providerModels.openai,
+  model: providers.openai.model,
   api_key: "",
   embedding_provider: "openai",
-  embedding_api_key: "",
-  embedding_model: "sentence-transformers/all-MiniLM-L6-v2",
   vector_store: "faiss",
-  pinecone_index: "",
-  pinecone_namespace: "default",
   chunk_size: 900,
   chunk_overlap: 150,
 };
+const suggestions = ["Summarize the key points", "Compare the main findings", "What evidence supports the conclusion?"];
+const activeSessionKey = "global-rag-active-session";
+const questionLimit = 12000;
+type Panel = "workspace" | "settings" | "sources" | "theme";
+type Activity = "session" | "upload" | "answer";
 
-const urlIngestionEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_URL_INGESTION === "true";
-const suggestions = ["What are the main points?", "Summarize the uploaded information", "What evidence supports the conclusion?"];
-const sessionId = crypto.randomUUID();
-
-type StatusTone = "neutral" | "success" | "error";
-
-function messageFrom(error: unknown, fallback: string): string {
+function messageFrom(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+function sessionName(session: SessionSummary) {
+  const date = new Date(session.created_at).toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  });
+  return `${date} · ${session.session_id.slice(0, 4)}`;
+}
+
+function Overlay({ title, description, onDismiss, children }: {
+  title: string;
+  description: string;
+  onDismiss: () => void;
+  children: ReactNode;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (dialog.current && !dialog.current.open) dialog.current.showModal();
+  }, []);
+
+  return <dialog className="overlay" ref={dialog} onClose={onDismiss} aria-labelledby="panel-title" aria-describedby="panel-description">
+    <div className="overlay-header">
+      <div><h2 id="panel-title">{title}</h2><p id="panel-description">{description}</p></div>
+      <button className="button icon-button" aria-label="Close panel" onClick={() => dialog.current?.close()}><Icon name="close" /></button>
+    </div>
+    <div className="overlay-body">{children}</div>
+  </dialog>;
+}
+
+function Message({ message }: { message: ChatMessage }) {
+  const assistant = message.role === "assistant";
+  const [copyStatus, setCopyStatus] = useState("");
+
+  async function copyAnswer() {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopyStatus("Copied");
+    } catch {
+      setCopyStatus("Copy unavailable");
+    }
+  }
+
+  return <article className={`message ${message.role}`}>
+    <span className="avatar" aria-hidden="true">{assistant ? <Icon name="spark" size={17} /> : "Y"}</span>
+    <div className="message-body">
+      <div className="message-heading">
+        <strong>{assistant ? "Global RAG" : "You"}</strong>
+        {assistant && <button className="button copy-button" onClick={() => void copyAnswer()}>
+          <Icon name={copyStatus === "Copied" ? "check" : "copy"} size={14} />{copyStatus || "Copy answer"}
+        </button>}
+        <span className="visually-hidden" role="status">{copyStatus}</span>
+      </div>
+      {assistant ? <div className="message-text">
+        <ReactMarkdown disallowedElements={["img"]} components={{
+          a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer">{children}</a>,
+        }}>{message.content}</ReactMarkdown>
+      </div> : <p className="question-text">{message.content}</p>}
+      {Boolean(message.citations?.length) && <div className="evidence">
+        <p className="section-label">Evidence <span className="count">{message.citations?.length}</span></p>
+        {message.citations?.map(citation => <details key={citation.number}>
+          <summary>
+            <span className="citation-number">{citation.number}</span>
+            <span className="citation-label">{citation.source}{citation.page ? ` · page ${citation.page}` : ""}{citation.sheet ? ` · sheet ${citation.sheet}` : ""}</span>
+            <Icon name="chevron" size={15} />
+          </summary>
+          <p>{citation.excerpt}</p>
+        </details>)}
+      </div>}
+    </div>
+  </article>;
+}
+
 export default function App() {
+  const [theme, setTheme] = useState(readTheme);
   const [settings, setSettings] = useState(defaults);
+  const [token, setToken] = useState("");
+  const [sessionId, setSessionId] = useState("");
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [profile, setProfile] = useState<CorpusProfile | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [files, setFiles] = useState<File[]>([]);
+  const [sources, setSources] = useState<Source[]>([]);
   const [url, setUrl] = useState("");
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("Add sources, then ask a question.");
-  const [statusTone, setStatusTone] = useState<StatusTone>("neutral");
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [activity, setActivity] = useState<Activity | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [sourceNotice, setSourceNotice] = useState<Notice | null>(null);
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const [hash, setHash] = useState(() => window.location.hash);
+  const [showLatest, setShowLatest] = useState(false);
+  const followMessages = useRef(true);
+  const thread = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const issue = modelIssue(settings);
+  const busy = activity !== null;
+  const canUseProviders = Boolean(token && sessionId && !issue && !busy);
+  const docsOpen = hash.startsWith("#docs/");
+
+  useLayoutEffect(() => { applyTheme(theme); }, [theme]);
+
+  useEffect(() => {
+    const updateHash = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", updateHash);
+    return () => window.removeEventListener("hashchange", updateHash);
+  }, []);
+
+  useEffect(() => {
+    if (followMessages.current && thread.current) {
+      thread.current.scrollTop = thread.current.scrollHeight;
+    }
+  }, [messages, activity, docsOpen]);
+
+  function scrollToLatest() {
+    followMessages.current = true;
+    setShowLatest(false);
+    if (thread.current) thread.current.scrollTop = thread.current.scrollHeight;
+  }
 
   const update = (patch: Partial<Settings>) => setSettings(current => ({ ...current, ...patch }));
-  const providerNeedsAzure = settings.provider === "azure_openai";
-  const embeddingKeyRequired =
-    (settings.embedding_provider === "openai" && !["openai", "azure_openai"].includes(settings.provider)) ||
-    (settings.embedding_provider === "gemini" && settings.provider !== "gemini");
-  const canChat = useMemo(
-    () => !!settings.api_key && (!embeddingKeyRequired || !!settings.embedding_api_key) && !busy,
-    [settings.api_key, settings.embedding_api_key, embeddingKeyRequired, busy],
-  );
 
-  async function ingestFiles(event: ChangeEvent<HTMLInputElement>) {
-    const incoming = Array.from(event.target.files || []);
-    if (!incoming.length) return;
-    if (!settings.api_key) {
-      setStatus("Enter your provider API key before adding sources.");
-      setStatusTone("error");
+  function applySession(session: SessionState & { messages: ChatMessage[] }) {
+    const saved = session.profile;
+    followMessages.current = true;
+    setShowLatest(false);
+    setSessionId(session.session_id);
+    setProfile(saved);
+    setSources(session.sources);
+    setMessages(session.messages);
+    setSourceNotice(null);
+    setInput("");
+    setUrl("");
+    if (saved) {
+      setSettings(current => {
+        const azureChanged = Boolean(saved.azure_endpoint && saved.azure_endpoint !== current.azure_endpoint);
+        return {
+          ...current, ...saved.index,
+          embedding_provider: saved.embedding_provider,
+          embedding_model: saved.embedding_provider === "azure_openai" ? "" : saved.embedding_model,
+          azure_embedding_deployment: saved.embedding_provider === "azure_openai" ? saved.embedding_model : undefined,
+          azure_endpoint: saved.azure_endpoint || current.azure_endpoint,
+          api_version: saved.api_version || current.api_version,
+          api_key: azureChanged && current.provider === "azure_openai" ? "" : current.api_key,
+          embedding_api_key: azureChanged || current.embedding_provider !== saved.embedding_provider ? "" : current.embedding_api_key,
+        };
+      });
+    }
+    try {
+      localStorage.setItem(activeSessionKey, session.session_id);
+    } catch {
+      // The API still lists recent sessions when browser storage is unavailable.
+    }
+  }
+
+  async function openSession(access: string, selectedId?: string, fresh = false) {
+    if (!access || busy) return false;
+    setActivity("session");
+    setNotice(null);
+    try {
+      let recent = await listSessions(access);
+      let remembered: string | null = null;
+      try {
+        remembered = localStorage.getItem(activeSessionKey);
+      } catch {
+        // Fall back to the most recent session.
+      }
+      let id = selectedId || recent.find(item => item.session_id === remembered)?.session_id || recent[0]?.session_id;
+      if (fresh || !id) {
+        id = (await createSession(access)).session_id;
+        recent = [{ session_id: id, created_at: new Date().toISOString() }, ...recent];
+      }
+      applySession(await loadSession(access, id));
+      setSessions(recent);
+      setToken(access);
+      setPanel(null);
+      return true;
+    } catch (error) {
+      setNotice({ tone: "error", text: messageFrom(error, "Unable to open the workspace.") });
+      return false;
+    } finally {
+      setActivity(null);
+    }
+  }
+
+  async function signIn(username: string, password: string) {
+    if (busy) return false;
+    setActivity("session");
+    setNotice(null);
+    try {
+      const access = await previewLogin(username, password);
+      return await openSession(access);
+    } catch (error) {
+      setNotice({ tone: "error", text: messageFrom(error, "Unable to sign in.") });
+      return false;
+    } finally {
+      setActivity(null);
+    }
+  }
+
+  function disconnect() {
+    setToken("");
+    setSessionId("");
+    setSessions([]);
+    setProfile(null);
+    setSettings(defaults);
+    setMessages([]);
+    setSources([]);
+    setInput("");
+    setUrl("");
+    setNotice(null);
+    setSourceNotice(null);
+    setPanel(null);
+    setShowLatest(false);
+    followMessages.current = true;
+  }
+
+  async function ingestFiles(files: File[]) {
+    if (!canUseProviders) return;
+    const problem = uploadIssue(files);
+    if (problem) {
+      setSourceNotice({ tone: "error", text: problem });
       return;
     }
-
-    setBusy(true);
-    setStatus("Reading and indexing your files…");
-    setStatusTone("neutral");
+    setActivity("upload");
+    setSourceNotice(null);
     try {
-      const result = await upload(sessionId, incoming, settings);
-      setFiles(current => [...current, ...incoming]);
-      setStatus(`Indexed ${result.chunks} passages from ${result.documents} file(s).`);
-      setStatusTone("success");
+      const result = await upload(token, sessionId, files, settings);
+      setSources(result.sources);
+      setProfile(result.profile);
+      setSourceNotice({ tone: "success", text: result.documents
+        ? `Indexed ${result.documents} ${result.documents === 1 ? "file" : "files"} · ${result.chunks} ${result.chunks === 1 ? "passage" : "passages"}.`
+        : "These files are already indexed." });
     } catch (error) {
-      setStatus(messageFrom(error, "Upload failed. Please try again."));
-      setStatusTone("error");
+      setSourceNotice({ tone: "error", text: messageFrom(error, "Upload failed. Please try again.") });
     } finally {
-      setBusy(false);
-      if (fileInput.current) fileInput.current.value = "";
+      setActivity(null);
     }
   }
 
   async function ingestUrl() {
-    if (!url.trim()) return;
-    if (!settings.api_key) {
-      setStatus("Enter your provider API key before adding sources.");
-      setStatusTone("error");
-      return;
-    }
-
-    setBusy(true);
-    setStatus("Reading and indexing the webpage…");
-    setStatusTone("neutral");
+    if (!url.trim() || !canUseProviders) return;
+    setActivity("upload");
+    setSourceNotice(null);
     try {
-      const result = await addUrl(sessionId, url, settings);
-      setStatus(`Indexed ${result.chunks} passages from this webpage.`);
-      setStatusTone("success");
+      const result = await addUrl(token, sessionId, url.trim(), settings);
+      setSources(result.sources);
+      setProfile(result.profile);
+      setSourceNotice({ tone: "success", text: result.documents ? "Webpage indexed." : "This webpage is already indexed." });
       setUrl("");
     } catch (error) {
-      setStatus(messageFrom(error, "URL import failed. Please try again."));
-      setStatusTone("error");
+      setSourceNotice({ tone: "error", text: messageFrom(error, "URL import failed. Please try again.") });
     } finally {
-      setBusy(false);
+      setActivity(null);
     }
   }
 
   async function send() {
     const question = input.trim();
-    if (!question || !canChat) return;
-
+    if (!question || !canUseProviders) return;
     setInput("");
+    setNotice(null);
+    scrollToLatest();
     setMessages(current => [...current, { role: "user", content: question }]);
-    setBusy(true);
+    setActivity("answer");
     try {
-      const result = await ask(sessionId, question, settings);
+      const result = await ask(token, sessionId, question, settings);
       setMessages(current => [...current, { role: "assistant", content: result.answer, citations: result.citations }]);
     } catch (error) {
-      setMessages(current => [...current, {
-        role: "assistant",
-        content: `**Request failed**\n\n${messageFrom(error, "Please try again.")}`,
-      }]);
+      setMessages(current => current.slice(0, -1));
+      setInput(question);
+      setNotice({ tone: "error", text: messageFrom(error, "The question could not be completed.") });
     } finally {
-      setBusy(false);
+      setActivity(null);
     }
   }
 
-  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void send();
-    }
-  }
+  const workspaceControls = token ? <div className="workspace-controls">
+    <label>Active session
+      <select value={sessionId} disabled={busy} onChange={event => void openSession(token, event.target.value)}>
+        {sessions.map(session => <option value={session.session_id} key={session.session_id}>{sessionName(session)}</option>)}
+      </select>
+    </label>
+    <button className="button secondary" disabled={busy} onClick={() => void openSession(token, undefined, true)}>
+      <Icon name="plus" size={17} /> New session
+    </button>
+    <button className="button quiet" disabled={busy} onClick={disconnect}><Icon name="logout" size={17} /> Disconnect</button>
+  </div> : <p className="muted">Connect to browse sessions and restore your chat.</p>;
 
-  return <main className="app-shell">
-    <aside className="sidebar">
-      <div className="brand">
-        <span aria-hidden="true">✦</span>
-        <div><strong>Global RAG</strong><small>Multi-source assistant</small></div>
+  const libraryProps = {
+    sources, busy, uploading: activity === "upload", notice: sourceNotice, url, setUrl,
+    disabledReason: !token ? "Connect a workspace to add sources." : issue,
+    onFiles: (files: File[]) => void ingestFiles(files), onUrl: () => void ingestUrl(),
+    onConfigure: token && issue && !busy ? () => setPanel("settings") : undefined,
+  };
+  const statusNotice = notice && <p className={`notice ${notice.tone}`} role="status"><Icon name="info" size={17} />{notice.text}</p>;
+
+  const themeControl = <button className="button secondary theme-trigger" onClick={() => setPanel("theme")} aria-label="Choose theme">
+    <Icon name="palette" size={17} /><span>Theme</span>
+  </button>;
+  const themeOverlay = panel === "theme" && <Overlay title="Choose a theme" description="Change the artwork and colors across your workspace." onDismiss={() => setPanel(null)}>
+    <ThemePicker selected={theme} onChange={setTheme} />
+    <form className="overlay-footer" method="dialog"><button className="button primary">Done <Icon name="check" size={17} /></button></form>
+  </Overlay>;
+
+  if (docsOpen) return <>
+    <Suspense fallback={<main className="docs-loading" role="status">Loading documentation…</main>}>
+      <DocsView hash={hash} themeControl={themeControl} />
+    </Suspense>
+    {themeOverlay}
+  </>;
+
+  if (!token) return <>
+    <SignIn busy={busy} notice={statusNotice} connect={access => void openSession(access)} signIn={signIn} themeControl={themeControl} />
+    {themeOverlay}
+  </>;
+
+  return <div className="app-shell" onDragOver={event => {
+    if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+  }} onDrop={event => {
+    if (event.dataTransfer.files.length) event.preventDefault();
+  }}>
+    <aside className="sidebar" aria-label="Workspace">
+      <Brand />
+      <div className="sidebar-main">
+        <p className="section-label">Workspace</p>
+        <div className="active-nav"><Icon name="chat" /> Document chat</div>
+        <div className="rail-session">{workspaceControls}</div>
       </div>
-
-      <section>
-        <h2>Model</h2>
-        <label>Provider
-          <select value={settings.provider} onChange={event => {
-            const provider = event.target.value as Settings["provider"];
-            update({ provider, model: providerModels[provider] });
-          }}>
-            <option value="openai">OpenAI</option>
-            <option value="gemini">Google Gemini</option>
-            <option value="groq">Groq</option>
-            <option value="anthropic">Anthropic Claude</option>
-            <option value="mistral">Mistral AI</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="azure_openai">Azure OpenAI</option>
-          </select>
-        </label>
-        <label>Model<input value={settings.model} onChange={event => update({ model: event.target.value })} placeholder="gpt-4o-mini" /></label>
-        <label>API key<input type="password" value={settings.api_key} onChange={event => update({ api_key: event.target.value })} placeholder="Stored only in this browser tab" /></label>
-        {providerNeedsAzure && <>
-          <label>Azure endpoint<input value={settings.azure_endpoint || ""} onChange={event => update({ azure_endpoint: event.target.value })} placeholder="https://resource.openai.azure.com" /></label>
-          <label>Deployment<input value={settings.azure_deployment || ""} onChange={event => update({ azure_deployment: event.target.value })} /></label>
-        </>}
-        <label>Embedding provider
-          <select value={settings.embedding_provider} onChange={event => update({ embedding_provider: event.target.value as Settings["embedding_provider"] })}>
-            <option value="openai">OpenAI embeddings</option>
-            <option value="gemini">Gemini embeddings</option>
-            <option value="huggingface">Hugging Face local embeddings</option>
-          </select>
-        </label>
-        {settings.embedding_provider === "huggingface"
-          ? <label>Hugging Face model<input value={settings.embedding_model || ""} onChange={event => update({ embedding_model: event.target.value })} placeholder="sentence-transformers/all-MiniLM-L6-v2" /></label>
-          : <label>Embedding API key {embeddingKeyRequired ? "(required)" : "(optional)"}<input type="password" value={settings.embedding_api_key || ""} onChange={event => update({ embedding_api_key: event.target.value })} placeholder={embeddingKeyRequired ? "Required because the chat key cannot create these embeddings" : "Needed when chat and embedding keys differ"} /></label>}
-      </section>
-
-      <section>
-        <h2>Retrieval</h2>
-        <label>Vector store
-          <select value={settings.vector_store} onChange={event => update({ vector_store: event.target.value as Settings["vector_store"] })}>
-            <option value="faiss">FAISS (local)</option>
-            <option value="chroma">Chroma (local)</option>
-            <option value="pinecone">Pinecone</option>
-          </select>
-        </label>
-        {settings.vector_store === "pinecone" && <label>Index name<input value={settings.pinecone_index} onChange={event => update({ pinecone_index: event.target.value })} /></label>}
-        <label>Chunk size<input type="number" value={settings.chunk_size} onChange={event => update({ chunk_size: Number(event.target.value) })} /></label>
-      </section>
-
-      <p className="privacy">Keys are kept only in this browser tab and sent to the backend you choose.</p>
+      <div className="sidebar-bottom">
+        <button className="button quiet" onClick={() => setPanel("settings")} disabled={!token || busy}><Icon name="settings" /> Model settings</button>
+        <a className="button quiet" href="#docs/overview"><Icon name="book" /> Documentation</a>
+        <p className="privacy"><Icon name="lock" size={14} /> Credentials stay in this browser tab and are sent to the configured API.</p>
+      </div>
     </aside>
 
-    <section className="chat">
-      <header>
-        <div>
-          <p className="eyebrow">KNOWLEDGE WORKSPACE</p>
-          <h1>Ask your sources</h1>
-          <p className="subtitle">Grounded answers from your documents, web pages, and notes.</p>
+    <main className="chat">
+      <header className="chat-header">
+        <div className="mobile-brand"><Brand /></div>
+        <div className="chat-heading"><p className="section-label">Workspace</p><h1>Document chat</h1></div>
+        <div className="header-actions">
+          <span className={`connection ${token ? "connected" : ""}`}><i />{token ? "Connected" : "Not connected"}</span>
+          {themeControl}
+          <a className="button secondary mobile-docs" href="#docs/overview" aria-label="Documentation"><Icon name="book" size={17} /><span>Docs</span></a>
         </div>
-        <span className={busy ? "status busy" : "status"}><i aria-hidden="true" />{busy ? "Working" : "Ready"}</span>
       </header>
 
-      <div className="source-bar">
-        <button className="upload" onClick={() => fileInput.current?.click()} disabled={busy || !settings.api_key}>＋ Add files</button>
-        <input ref={fileInput} type="file" accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.png,.jpg,.jpeg,.webp" multiple hidden onChange={ingestFiles} />
-        {urlIngestionEnabled && <div className="url-input"><input value={url} onChange={event => setUrl(event.target.value)} placeholder="Paste a public webpage URL" /><button onClick={() => void ingestUrl()} disabled={busy || !url.trim() || !settings.api_key}>Add URL</button></div>}
+      {token && <nav className="mobile-tools" aria-label="Workspace tools">
+        <button className="button quiet mobile-workspace" onClick={() => setPanel("workspace")} disabled={busy}><Icon name="chat" size={16} /> Workspace</button>
+        <button className="button quiet mobile-model" onClick={() => setPanel("settings")} disabled={busy}><Icon name="settings" size={16} /> Model</button>
+        <button className="button quiet mobile-sources" onClick={() => setPanel("sources")}><Icon name="folder" size={16} /> Sources <span className="count">{sources.length}</span></button>
+      </nav>}
+
+      <div className="thread" ref={thread} onScroll={event => {
+        const target = event.currentTarget;
+        const atBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 90;
+        followMessages.current = atBottom;
+        setShowLatest(!atBottom);
+      }}>
+        {!messages.length ? <section className="welcome" aria-labelledby="welcome-title">
+          <Landscape />
+          <p className="section-label"><Icon name="spark" size={15} /> Research workspace</p>
+          <h2 id="welcome-title">Ask your<br /><em>sources.</em></h2>
+          <p className="welcome-description">Find the passages that answer your questions.</p>
+          {issue ? <div className="welcome-action">
+            <button className="button primary" disabled={busy} onClick={() => setPanel("settings")}><Icon name="settings" size={17} /> Configure model</button>
+            <p>{issue}</p>
+          </div> : sources.length ? <div className="suggestions">
+            {suggestions.map(suggestion => <button className="button secondary" key={suggestion} disabled={busy} onClick={() => {
+              setInput(suggestion);
+              composer.current?.focus();
+            }}><Icon name="chat" size={15} />{suggestion}</button>)}
+          </div> : <div className="welcome-action">
+            <button className="button primary" onClick={() => setPanel("sources")}><Icon name="plus" size={17} /> Add sources</button>
+            <p>Add a document to start asking questions about it.</p>
+          </div>}
+        </section> : <div className="transcript" role="log" aria-label="Chat messages">
+          {messages.map((message, index) => <Message key={`${sessionId}-${index}`} message={message} />)}
+          {activity === "answer" && <div className="pending"><span className="spinner" /> Searching sources and preparing an answer…</div>}
+        </div>}
       </div>
 
-      {files.length > 0 && <div className="chips">{files.map((file, index) => <span key={`${file.name}-${index}`}>▣ {file.name}</span>)}</div>}
-      <p className={`status-line ${statusTone}`}>{status}</p>
-
-      <div className="messages" aria-live="polite">
-        {messages.length === 0
-          ? <div className="empty">
-              <div className="empty-icon" aria-hidden="true">⌁</div>
-              <h2>Build an answer from your own data</h2>
-              <p>Add documents, then ask a focused question. Every answer includes its supporting sources.</p>
-              <div className="suggestions">{suggestions.map(suggestion => <button key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}</div>
+      {token && <footer className="composer-area">
+        <div className="composer-inner">
+          {showLatest && messages.length > 0 && <button className="button secondary latest" onClick={scrollToLatest}>Latest messages <Icon name="chevron" size={15} /></button>}
+          {panel !== "workspace" && statusNotice}
+          <form className="composer" onSubmit={event => { event.preventDefault(); void send(); }}>
+            <label htmlFor="question" className="visually-hidden">Your question</label>
+            <textarea id="question" ref={composer} rows={2} maxLength={questionLimit} disabled={activity === "answer"}
+              value={input} onChange={event => setInput(event.target.value)}
+              placeholder={issue ? "Configure a model to send a question" : "Ask a question about your sources…"}
+              onKeyDown={event => {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  void send();
+                }
+              }} />
+            <div className="composer-actions">
+              <button className="button quiet attach-button" type="button" onClick={() => setPanel("sources")}><Icon name="folder" size={17} /> Sources</button>
+              {input.length > questionLimit - 500 && <span className="character-count">{input.length.toLocaleString()} / {questionLimit.toLocaleString()}</span>}
+              <button className="button primary send" aria-label="Send question" disabled={!input.trim() || !canUseProviders}><Icon name="send" size={19} /></button>
             </div>
-          : messages.map((message, index) => <article className={`message ${message.role}`} key={index}>
-              <div className="avatar">{message.role === "user" ? "You" : "AI"}</div>
-              <div className="bubble">
-                <ReactMarkdown>{message.content}</ReactMarkdown>
-                {message.citations && <details><summary>Sources ({message.citations.length})</summary>{message.citations.map((citation, citationIndex) => <div className="citation" key={citationIndex}><strong>[{citationIndex + 1}] {citation.source}{citation.page ? ` · page ${citation.page}` : ""}</strong><p>{citation.excerpt}</p></div>)}</details>}
-              </div>
-            </article>)}
-      </div>
+          </form>
+          <p className="composer-note">{issue ? <>
+            {issue} <button className="text-button" disabled={busy} onClick={() => setPanel("settings")}>Open model settings</button>
+          </> : sources.length ? "Enter to send · Shift + Enter for a new line" : "Add a source before asking a document question."}</p>
+        </div>
+      </footer>}
+    </main>
 
-      <footer>
-        <textarea value={input} onChange={event => setInput(event.target.value)} onKeyDown={onKeyDown} placeholder={settings.api_key ? "Ask a question about your sources…" : "Enter an API key to start…"} rows={2} />
-        <button className="send" onClick={() => void send()} disabled={!input.trim() || !canChat}>Send <span aria-hidden="true">↗</span></button>
-        <div className="footer-meta"><small>Enter to send · Shift+Enter for a new line</small><small className="copyright">© 2026 Vishal Jain</small></div>
-      </footer>
-    </section>
-  </main>;
+    <aside className="source-rail" aria-label="Sources">
+      <div className="rail-heading"><span className="rail-icon"><Icon name="folder" /></span><div><h2>Sources</h2><p>Evidence for this session</p></div></div>
+      <SourceLibrary key={sessionId} {...libraryProps} />
+    </aside>
+
+    {panel === "workspace" && <Overlay key={panel} title="Workspace" description="Open, create, or disconnect from a session." onDismiss={() => setPanel(null)}>
+      {workspaceControls}{statusNotice}
+    </Overlay>}
+    {panel === "settings" && <Overlay key={panel} title="Model settings" description="Choose your chat model, credentials, and index configuration." onDismiss={() => setPanel(null)}>
+      <ModelSettings settings={settings} profile={profile} update={update} issue={issue} disabled={busy} />
+      <form className="overlay-footer" method="dialog"><button className="button primary">Done <Icon name="check" size={17} /></button></form>
+    </Overlay>}
+    {panel === "sources" && <Overlay key={panel} title="Sources" description="Add documents and see what is indexed in this session." onDismiss={() => setPanel(null)}>
+      <SourceLibrary {...libraryProps} />
+    </Overlay>}
+    {themeOverlay}
+  </div>;
 }

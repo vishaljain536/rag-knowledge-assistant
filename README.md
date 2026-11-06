@@ -1,101 +1,68 @@
 # Global RAG Assistant
 
-A full-stack, multi-provider chat application that answers questions from PDFs, Word documents, spreadsheets, text files, public URLs, and image uploads.
+Ask questions about your documents and inspect the passages used in the answer. The React frontend connects to a FastAPI backend. LangGraph routes questions through retrieval and generation. SQLite keeps workspace-scoped sessions, source records and transcripts.
 
-The React interface lets each user choose a language-model provider and retrieval store. The FastAPI backend uses LangChain for integrations and LangGraph to run a retrieve-then-answer workflow. Conversation history is stored in SQLite; document indexes can use local FAISS, local Chroma, or Pinecone.
+Open **Documentation** in the app to read the same project files, including the changelog and code walkthrough.
 
-## What is included
-
-- **Chat UI:** React + Vite interface with document/URL ingestion, streamed-style conversation display, citations, and provider settings.
-- **File support:** PDF, DOCX, XLSX/XLS, CSV, TXT, Markdown, PNG, JPG/JPEG, and WebP.
-- **URL support:** extracts readable text from a public webpage.
-- **LLM choices:** OpenAI, Google Gemini, Groq, Anthropic Claude, Mistral AI, OpenRouter, and Azure OpenAI.
-- **Vector stores:** FAISS, Chroma, and Pinecone.
-- **Database:** SQLite keeps conversation and message records for a lightweight single-user deployment.
-- **Safety:** API keys are never written to SQLite or project files. Retrieved content is treated as untrusted reference material, never as application instructions.
-
-## Architecture
-
-```text
-React browser UI
-   | files / URL / question / temporary provider configuration
-FastAPI
-   |-- document parsers -> chunking -> embeddings -> FAISS | Chroma | Pinecone
-   |-- LangGraph: retrieve -> grounded answer -> citations
-   `-- SQLite: conversation metadata + messages
-```
+- [Code walkthrough](CODE_WALKTHROUGH.md) explains the request flows, storage and provider adapters.
+- [Changelog](CHANGELOG.md) records changes, upgrade steps and verification.
+- [Deployment guide](DEPLOYMENT.md) covers configuration, persistence and release checks.
+- [Project review](PROJECT_GUIDE.md) records the findings that motivated these changes.
 
 ## Start locally
 
-### Docker
+### Docker Compose
 
-1. Copy `.env.example` to `.env` and add any server-side configuration you need.
-2. Run `docker compose up --build`.
-3. Open `http://localhost:5173`.
+1. Copy `.env.example` to `.env` and generate a token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+2. Set `WORKSPACE_TOKENS='{"local":"paste-your-generated-token-here"}'` in `.env`. Treat the token like a password.
+3. Run `docker compose up --build` and open [the local frontend](http://localhost:5173).
+4. Connect with the workspace token. Enter a provider key, upload a file, and ask a question. Use one workspace slug and independently generated token per group that should share a corpus.
 
-### Development
+Compose binds the services to loopback and uses the named `rag-data` volume. `docker compose down` retains the volume. Review the [upgrade steps](DEPLOYMENT.md#upgrading-from-the-prototype) if you already have a bind-mounted data directory.
 
-Backend:
+### Native development on Windows
 
-```bash
-cd backend
+Backend, from `backend/` in PowerShell:
+
+```powershell
 python -m venv .venv
-source .venv/bin/activate  # Windows PowerShell: .venv\\Scripts\\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.lock
+$workspaceToken = python -c "import secrets; print(secrets.token_urlsafe(32))"
+$env:WORKSPACE_TOKENS = @{ local = $workspaceToken } | ConvertTo-Json -Compress
+$workspaceToken
+python -m uvicorn app.main:app --reload --port 8000 --no-access-log
 ```
 
-Frontend, in another terminal:
+Frontend, from `frontend/` with Node.js 24:
 
-```bash
-cd frontend
-npm install
+```powershell
+npm ci
 npm run dev
 ```
 
-Open the Vite URL shown in the terminal. The default API URL is `http://localhost:8000`; set `VITE_API_URL` when hosting the API elsewhere.
+Use the workspace token printed in the backend terminal. To reuse the same workspace on a later launch, supply its configured slug and token again. The session list, uploaded source labels and transcripts are restored after reconnecting. Only the last selected session ID is stored in the browser.
 
-## Provider setup
+Use **Model settings** to enter provider credentials and **Sources** to add files. On a phone, both controls are in the toolbar below the workspace header.
 
-Enter the selected provider key in the UI. It is sent with the request to the backend and is not stored in SQLite.
+For a local username and password preview, set `$env:ENABLE_LOCAL_DEMO_LOGIN = 'true'` before starting the API on loopback and use the Vite server at port 5173. Select **Use a workspace token instead** to return to token sign-in.
 
-| Chat provider | Typical model | Embeddings |
-| --- | --- | --- |
-| OpenAI | `gpt-4o-mini` | OpenAI embeddings |
-| Gemini | `gemini-1.5-flash` | Gemini embeddings or a separate OpenAI embedding key |
-| Groq | `llama-3.1-8b-instant` | Groq has no embedding endpoint; choose OpenAI, Gemini, or local Hugging Face embeddings |
-| Anthropic Claude | `claude-sonnet-5-5` | Choose OpenAI, Gemini, or local Hugging Face embeddings; API embeddings require a separate key |
-| Mistral AI | `mistral-small-latest` | Choose OpenAI, Gemini, or local Hugging Face embeddings; API embeddings require a separate key |
-| OpenRouter | `openrouter/auto` or a provider-qualified model ID | Choose OpenAI, Gemini, or local Hugging Face embeddings; API embeddings require a separate key |
-| Azure OpenAI | deployment name | Azure embeddings for Azure deployments |
+## Sources and providers
 
-For a Gemini chat model, set the UI's embedding provider to Gemini if the same key should create embeddings. The Hugging Face option downloads the selected open-source Sentence Transformers model on first use and caches it locally; its default is `sentence-transformers/all-MiniLM-L6-v2` and it requires no embedding API key. Pinecone also needs its server environment credentials and an existing index compatible with the selected embedding dimensions.
+- Supported uploads are text PDFs, DOCX, XLSX, UTF-8 CSV, TXT and Markdown. XLSX uses cached cell values. DOCX extracts paragraphs and top-level table rows. OCR is needed before uploading image-only PDFs or standalone images.
+- FAISS is the default store. Chroma is a local option. Pinecone requires a server-managed key and compatible index, with one server-derived namespace per session.
+- Chat adapters cover OpenAI, Gemini, Groq, Anthropic, Mistral, OpenRouter and Azure OpenAI. Enter a separate embedding key if chat and embeddings use different hosted providers.
+- The default OpenAI embedding model is `text-embedding-3-small`. Gemini uses `gemini-embedding-001` with separate retrieval task modes for queries and documents. Azure requires an approved resource origin and distinct chat and embedding deployment fields. [Google Gemini embedding documentation](https://ai.google.dev/gemini-api/docs/embeddings?authuser=117) · [Microsoft Azure embedding setup](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/embeddings)
+- Optional local Hugging Face embeddings require installing `requirements-local.txt` in a fresh native environment and setting `HUGGINGFACE_ALLOWED_MODELS` to the approved model ID. The default local model ID in the UI is `sentence-transformers/all-MiniLM-L6-v2`.
+- The first ingestion binds the index to its embedding settings. Start a new session and re-upload sources when changing the embedding model, store, or chunking.
+- URL import requires an explicit backend allowlist and opt-in. See [deployment configuration](DEPLOYMENT.md#optional-features).
 
-## Images
+## Verify locally
 
-The UI accepts image files and retains them as source items. This first production scaffold marks image sources for citation; connect a multimodal vision extractor for the selected provider before relying on image content as factual RAG context. PDFs with scanned images likewise need OCR or a vision extraction step.
-
-## Deployment
-
-For a private single-tenant hosted deployment, use the Vercel frontend and Render Docker backend configuration in [`DEPLOYMENT.md`](DEPLOYMENT.md). The frontend is available at [rag-knowledge-assistant-wine.vercel.app](https://rag-knowledge-assistant-wine.vercel.app); it becomes functional after the backend is provisioned and `VITE_API_URL` is configured. Hosted URL ingestion is disabled until its SSRF-safe fetcher is implemented.
-
-## Operational logs
-
-The backend keeps the latest 500 sanitized operational events in process memory. Events include request IDs, routes, response status, durations, RAG routing, retrieval, model invocation, and ingestion counts. They exclude keys, headers, prompts, answers, document content, file names, and raw URLs. The buffer resets whenever the backend restarts.
-
-```bash
-# Recent events
-curl "http://localhost:8000/logs?limit=100"
-
-# Follow events line by line as Server-Sent Events
-curl -N "http://localhost:8000/logs/stream"
+```text
+cd backend
+python -m pip install -r requirements-test.txt
+python -m pytest -q
 ```
 
-The log endpoints are public. They contain only sanitized operational metadata, but anyone with the backend URL can read them.
-
-## Deployment notes
-
-- The API has no authentication; every request must carry the caller's own model-provider key.
-- Replace anonymous `session_id` use with real authentication for multi-user production.
-- Use a managed database rather than SQLite when running multiple API replicas.
-- The local FAISS/Chroma indexes are stored in `data/` and should be backed up or mounted as persistent storage.
+The tests use temporary SQLite and local indexes with synthetic provider responses. To build the frontend, run `npm ci` and `npm run build` from `frontend/`. See the [release checks](DEPLOYMENT.md#release-checks) for a live provider smoke test.
