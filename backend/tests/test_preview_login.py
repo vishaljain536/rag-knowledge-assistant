@@ -6,7 +6,7 @@ from app.settings import settings
 
 
 def test_demo_login_is_opt_in_loopback_and_workspace_only(client, monkeypatch):
-    credentials = {"username": "admin", "password": "BBRVY5"}
+    credentials = {"username": "admin", "password": settings.demo_admin_password.get_secret_value()}
     origin = {"Origin": "http://127.0.0.1:5173"}
     with TestClient(app, base_url="http://127.0.0.1:8000", client=("127.0.0.1", 54000)) as local:
         monkeypatch.setattr(settings, "enable_local_demo_login", False)
@@ -25,13 +25,12 @@ def test_demo_login_is_opt_in_loopback_and_workspace_only(client, monkeypatch):
         assert client.get("/sessions", headers=bearer).status_code == 401
 
 
-def test_hosted_demo_requires_password_and_origin(client, monkeypatch):
+def test_hosted_demo_requires_origin(client, monkeypatch):
     headers = {"Origin": "https://demo.example.test"}
-    credentials = {"username": "admin", "password": "demo-test-password"}
-    monkeypatch.setattr(settings, "hosted_demo_origin", headers["Origin"])
-    monkeypatch.setattr(settings, "hosted_demo_password", None)
+    credentials = {"username": "admin", "password": settings.demo_admin_password.get_secret_value()}
+    monkeypatch.setattr(settings, "hosted_demo_origin", "")
     assert client.post("/preview/login", json=credentials, headers=headers).status_code == 404
-    monkeypatch.setattr(settings, "hosted_demo_password", SecretStr(credentials["password"]))
+    monkeypatch.setattr(settings, "hosted_demo_origin", headers["Origin"])
     assert client.post("/preview/login", json=credentials).status_code == 404
     assert client.post("/preview/login", json={**credentials, "password": "wrong"}, headers=headers).status_code == 401
     response = client.post("/preview/login", json=credentials, headers=headers)

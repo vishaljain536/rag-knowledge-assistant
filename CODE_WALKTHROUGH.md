@@ -16,7 +16,7 @@
 
 The transcript follows new messages while the reader is near the bottom. When they scroll back, the composer offers a **Latest messages** control. Each answer can be copied and its numbered evidence passages can be opened individually. [SignIn.tsx](frontend/src/SignIn.tsx) renders the entry screen, [Icons.tsx](frontend/src/Icons.tsx) provides the SVG icon set, and [archive-falls.webp](frontend/public/archive-falls.webp) supplies the original generated artwork for the entry screen and the workspace welcome card.
 
-**Use admin login** exchanges demo credentials for a process-scoped bearer token through `POST /preview/login`. The local account requires loopback and `ENABLE_LOCAL_DEMO_LOGIN=true`. Hosted demo access requires a configured HTTPS frontend origin and a server-side password. The local and hosted demo tokens open separate workspaces and have no operator access.
+**Use admin login** exchanges demo credentials for a process-scoped bearer token through `POST /preview/login`. The local account requires loopback, `ENABLE_LOCAL_DEMO_LOGIN=true`, and the server-only `DEMO_ADMIN_PASSWORD`. Hosted demo access requires a configured HTTPS frontend origin and the same server-only password. The local and hosted demo tokens open separate workspaces and have no operator access.
 
 [ThemePicker.tsx](frontend/src/ThemePicker.tsx) stores the selected theme and motion preference locally and sets the palette at the document root. The sign-in screen, workspace, and documentation share those colors.
 

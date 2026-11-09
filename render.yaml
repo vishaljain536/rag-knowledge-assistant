@@ -21,5 +21,7 @@ services:
         value: "false"
       - key: WORKSPACE_TOKENS
         sync: false
+      - key: DEMO_ADMIN_PASSWORD
+        sync: false
       - key: CORS_ORIGINS
         value: https://rag-knowledge-assistant-wine.vercel.app
