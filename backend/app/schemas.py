@@ -20,6 +20,7 @@ EMBEDDING_DEFAULTS = {
     "huggingface": "sentence-transformers/all-MiniLM-L6-v2",
 }
 CONFIG_ERRORS = {
+    "api_key_required": "Enter a provider API key or choose an available server key.",
     "embedding_key_required": "A separate embedding key is required when the providers differ.",
     "azure_endpoint_required": "Choose an Azure endpoint approved by the server.",
     "azure_chat_deployment": "Enter the Azure chat deployment.",
@@ -38,7 +39,8 @@ def _config_error(code: str) -> PydanticCustomError:
 class ProviderSettings(BaseModel):
     provider: Provider = "openai"
     model: ModelName = "gpt-4o-mini"
-    api_key: SecretStr = Field(min_length=1, max_length=4096)
+    credential_mode: Literal["user", "server"] = "user"
+    api_key: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
     azure_endpoint: str | None = Field(default=None, max_length=255)
     azure_deployment: DeploymentName | None = None
     azure_embedding_deployment: DeploymentName | None = None
@@ -49,7 +51,9 @@ class ProviderSettings(BaseModel):
 
     @model_validator(mode="after")
     def validate_provider_configuration(self):
-        if self.embedding_provider != "huggingface" and self.embedding_provider != self.provider and not self.embedding_api_key:
+        if self.credential_mode == "user" and not self.api_key:
+            raise _config_error("api_key_required")
+        if self.credential_mode == "user" and self.embedding_provider != "huggingface" and self.embedding_provider != self.provider and not self.embedding_api_key:
             raise _config_error("embedding_key_required")
         if self.provider == "azure_openai" or self.embedding_provider == "azure_openai":
             self.azure_endpoint = (self.azure_endpoint or "").rstrip("/")

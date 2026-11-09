@@ -1,4 +1,4 @@
-import type { ChatMessage, CorpusProfile, SessionState, SessionSummary, Settings, Source } from "./types";
+import type { ChatMessage, CorpusProfile, Identity, SessionState, SessionSummary, Settings, Source } from "./types";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -16,13 +16,16 @@ type ChatResult = { answer: string; citations: NonNullable<ChatMessage["citation
 const provider = (settings: Settings) => ({
   provider: settings.provider,
   model: settings.model,
-  api_key: settings.api_key,
+  credential_mode: settings.credential_mode,
+  ...(settings.credential_mode === "user" ? {
+    api_key: settings.api_key,
+    embedding_api_key: settings.embedding_api_key || null,
+  } : {}),
   azure_endpoint: settings.azure_endpoint || null,
   azure_deployment: settings.azure_deployment || null,
   azure_embedding_deployment: settings.azure_embedding_deployment || null,
   api_version: settings.api_version || "2024-10-21",
   embedding_provider: settings.embedding_provider,
-  embedding_api_key: settings.embedding_api_key || null,
   embedding_model: settings.embedding_model || null,
 });
 
@@ -78,6 +81,10 @@ export async function previewLogin(username: string, password: string) {
     body: JSON.stringify({ username, password }),
   });
   return token;
+}
+
+export function getIdentity(token: string) {
+  return request<Identity>(token, "/identity");
 }
 
 export function listSessions(token: string) {

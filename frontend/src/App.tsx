@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
-import { addUrl, ask, createSession, listSessions, loadSession, previewLogin, upload } from "./api";
+import { addUrl, ask, createSession, getIdentity, listSessions, loadSession, previewLogin, upload } from "./api";
 import { Icon } from "./Icons";
 import { Landscape } from "./Landscape";
 import { Brand, SignIn } from "./SignIn";
@@ -9,10 +9,11 @@ import { applyTheme, readBackgroundMotion, readTheme, saveBackgroundMotion, Them
 import { modelIssue, ModelSettings, providers } from "./ModelSettings";
 import { SourceLibrary, uploadIssue } from "./SourceLibrary";
 import type { Notice } from "./SourceLibrary";
-import type { ChatMessage, CorpusProfile, SessionState, SessionSummary, Settings, Source } from "./types";
+import type { ChatMessage, CorpusProfile, Identity, SessionState, SessionSummary, Settings, Source } from "./types";
 
 const DocsView = lazy(() => import("./DocsView"));
 const defaults: Settings = {
+  credential_mode: "user",
   provider: "openai",
   model: providers.openai.model,
   api_key: "",
@@ -106,6 +107,7 @@ export default function App() {
   const [motionEnabled, setMotionEnabled] = useState(readBackgroundMotion);
   const [settings, setSettings] = useState(defaults);
   const [token, setToken] = useState("");
+  const [identity, setIdentity] = useState<Identity | null>(null);
   const [sessionId, setSessionId] = useState("");
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [profile, setProfile] = useState<CorpusProfile | null>(null);
@@ -187,6 +189,7 @@ export default function App() {
     setActivity("session");
     setNotice(null);
     try {
+      const identityResponse = await getIdentity(access);
       let recent = await listSessions(access);
       let remembered: string | null = null;
       try {
@@ -201,6 +204,7 @@ export default function App() {
       }
       applySession(await loadSession(access, id));
       setSessions(recent);
+      setIdentity(identityResponse);
       setToken(access);
       setPanel(null);
       return true;
@@ -229,6 +233,7 @@ export default function App() {
 
   function disconnect() {
     setToken("");
+    setIdentity(null);
     setSessionId("");
     setSessions([]);
     setProfile(null);
@@ -454,7 +459,9 @@ export default function App() {
       {workspaceControls}{statusNotice}
     </Overlay>}
     {panel === "settings" && <Overlay key={panel} title="Model settings" description="Choose your chat model, credentials, and index configuration." onDismiss={() => setPanel(null)}>
-      <ModelSettings settings={settings} profile={profile} update={update} issue={issue} disabled={busy} />
+      <ModelSettings settings={settings} profile={profile} update={update} issue={issue} disabled={busy}
+        canUseServerManagedKeys={Boolean(identity?.can_use_server_managed_keys)}
+        serverKeyProviders={identity?.server_key_providers || []} />
       <form className="overlay-footer" method="dialog"><button className="button primary">Done <Icon name="check" size={17} /></button></form>
     </Overlay>}
     {panel === "sources" && <Overlay key={panel} title="Sources" description="Add documents and see what is indexed in this session." onDismiss={() => setPanel(null)}>

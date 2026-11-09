@@ -13,7 +13,8 @@ from sqlalchemy import select
 from starlette.datastructures import UploadFile
 
 from . import corpora
-from .access import authorize, demo_login, hosted_demo_allowed, local_demo_allowed
+from .access import AuthContext, authorize, demo_login, hosted_demo_allowed, local_demo_allowed
+from .credentials import resolve_provider_settings
 from .db import SessionLocal, init_db
 from .documents import MAX_FILES, MAX_FILE_BYTES, MAX_UPLOAD_BYTES, extract_upload
 from .errors import ApiError
@@ -100,11 +101,12 @@ async def request_boundary(request: Request, call_next):
             else:
                 response = _error(request, 404, "not_found", "Demo sign-in is unavailable.")
         elif not public:
-            workspace = authorize(request, operator=operator)
-            if workspace is None:
+            auth = authorize(request, operator=operator)
+            if auth is None:
                 response = _error(request, 401, "unauthorized", "A valid access token is required.")
             else:
-                request.state.workspace = workspace
+                request.state.auth = auth
+                request.state.workspace = auth.workspace
                 response = _body_limit(request)
                 if response is None:
                     response = await call_next(request)
@@ -157,6 +159,17 @@ def preview_login(request: Request, credentials: DemoCredentials):
     if token is None:
         raise ApiError(401, "invalid_credentials", "The username or password is incorrect.")
     return {"token": token}
+
+
+@app.get("/identity")
+def identity(request: Request):
+    auth: AuthContext = request.state.auth
+    return {
+        "workspace": auth.workspace,
+        "authentication": auth.authentication,
+        "can_use_server_managed_keys": auth.can_use_server_managed_keys,
+        "server_key_providers": sorted(settings.server_key_providers) if auth.can_use_server_managed_keys else [],
+    }
 
 
 @app.get("/ready")
@@ -230,7 +243,7 @@ async def ingest_files(request: Request):
             try:
                 # This small form model validates the UUID and hides raw multipart inputs in errors.
                 values = IngestForm.model_validate(dict(form))
-                provider = ProviderSettings.model_validate_json(values.provider_json)
+                provider = resolve_provider_settings(request.state.auth, ProviderSettings.model_validate_json(values.provider_json))
                 index = IndexSettings.model_validate_json(values.index_json) if values.index_json else None
             except ValidationError as exc:
                 raise _validation_error(exc) from exc
@@ -250,7 +263,7 @@ async def ingest_url(payload: IngestUrlRequest, request: Request):
         raise ApiError(429, "ingest_busy", "Too many imports are running. Try again shortly.") from exc
     try:
         return await run_in_threadpool(
-            corpora.ingest, request.state.workspace, payload.session_id, payload.provider, payload.index,
+            corpora.ingest, request.state.workspace, payload.session_id, resolve_provider_settings(request.state.auth, payload.provider), payload.index,
             lambda: [extract_url(payload.url)],
         )
     finally:
@@ -259,7 +272,8 @@ async def ingest_url(payload: IngestUrlRequest, request: Request):
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest, request: Request):
-    return corpora.chat(request.state.workspace, payload)
+    resolved = payload.model_copy(update={"provider": resolve_provider_settings(request.state.auth, payload.provider)})
+    return corpora.chat(request.state.workspace, resolved)
 
 
 @app.get("/conversations/{session_id}")

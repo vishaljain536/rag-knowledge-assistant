@@ -66,3 +66,7 @@ python -m pytest -q
 ```
 
 The tests use temporary SQLite and local indexes with synthetic provider responses. To build the frontend, run `npm ci` and `npm run build` from `frontend/`. See the [release checks](DEPLOYMENT.md#release-checks) for a live provider smoke test.
+
+## Admin server-managed provider keys
+
+The admin-demo workspace can select a configured server key or paste a personal key in **Model settings**. Configure provider keys only as server secrets (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`, `AZURE_OPENAI_API_KEY`), never as `VITE_*` variables. Workspace-token users must use their own keys. See [DEPLOYMENT.md](DEPLOYMENT.md) for the billing and embedding-provider rules.

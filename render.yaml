@@ -23,5 +23,20 @@ services:
         sync: false
       - key: DEMO_ADMIN_PASSWORD
         sync: false
+      # Optional: only the admin-demo workspace can select these server-managed keys.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: AZURE_OPENAI_API_KEY
+        sync: false
       - key: CORS_ORIGINS
         value: https://rag-knowledge-assistant-wine.vercel.app
