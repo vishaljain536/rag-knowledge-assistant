@@ -4,6 +4,17 @@ import { Icon } from "./Icons";
 import { Landscape } from "./Landscape";
 import type { ThemeId } from "./ThemePicker";
 
+const TOKEN_FORMAT = /^[A-Za-z0-9_-]{32,128}$/;
+
+// People often paste a whole config line such as WORKSPACE_TOKENS='{"team":"<token>"}'.
+// Use the token inside it when there is exactly one; otherwise send the text unchanged.
+function cleanToken(raw: string) {
+  const text = raw.trim();
+  if (TOKEN_FORMAT.test(text)) return text;
+  const candidates = text.match(/[A-Za-z0-9_-]{32,128}/g) ?? [];
+  return candidates.length === 1 ? candidates[0] : text;
+}
+
 const localPreview = ["localhost", "127.0.0.1"].includes(window.location.hostname) && window.location.port === "5173";
 const hostedDemo = window.location.protocol === "https:" && import.meta.env.VITE_ENABLE_HOSTED_DEMO_LOGIN === "true";
 
@@ -45,7 +56,7 @@ export function SignIn({ busy, notice, connect, signIn, themeControl, theme, mot
       </div>
       <form className="arrival-card" onSubmit={event => {
         event.preventDefault();
-        if (useToken) connect(workspaceToken.trim());
+        if (useToken) connect(cleanToken(workspaceToken));
         else void signIn(username.trim(), password).then(success => { if (success) setPassword(""); });
       }}>
         <div className="arrival-card-icon"><Icon name="lock" size={20} /></div>
