@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     admin_token: SecretStr | None = None
     enable_local_demo_login: bool = False
     hosted_demo_origin: str = ""
-    hosted_demo_password: SecretStr | None = None
+    demo_admin_password: SecretStr
     enable_url_ingestion: bool = False
     url_allowed_hosts: str = ""
     azure_allowed_endpoints: str = ""
@@ -45,6 +45,13 @@ class Settings(BaseSettings):
             return None
         if value and not TOKEN_PATTERN.fullmatch(value.get_secret_value()):
             raise ValueError("Use a URL-safe admin token of 32–128 characters.")
+        return value
+
+    @field_validator("demo_admin_password")
+    @classmethod
+    def check_demo_admin_password(cls, value):
+        if not value.get_secret_value():
+            raise ValueError("DEMO_ADMIN_PASSWORD must not be empty.")
         return value
 
     @model_validator(mode="after")

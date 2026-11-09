@@ -58,6 +58,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(settings, "workspace_tokens", {"alpha": SecretStr(TOKEN), "beta": SecretStr(OTHER_TOKEN)})
     monkeypatch.setattr(settings, "admin_token", SecretStr(ADMIN_TOKEN))
+    monkeypatch.setattr(settings, "demo_admin_password", SecretStr("demo-test-password"))
     monkeypatch.setattr(settings, "enable_url_ingestion", False)
     monkeypatch.setattr(settings, "azure_allowed_endpoints", "https://approved.openai.azure.com")
     monkeypatch.setattr(settings, "pinecone_index", "")

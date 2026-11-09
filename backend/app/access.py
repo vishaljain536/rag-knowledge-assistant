@@ -26,24 +26,18 @@ def local_demo_allowed(request: Request) -> bool:
 
 def hosted_demo_allowed(request: Request) -> bool:
     origin = settings.hosted_demo_origin
-    password = settings.hosted_demo_password
-    return bool(
-        password and password.get_secret_value()
-        and origin.startswith("https://")
-        and request.headers.get("origin") == origin
-    )
+    return bool(origin.startswith("https://") and request.headers.get("origin") == origin)
 
 
 def demo_login(request: Request, username: str, password: str) -> str | None:
     valid_user = hmac.compare_digest(username.encode(), b"admin")
     if local_demo_allowed(request):
-        expected_password, token = "BBRVY5", _DEMO_TOKEN
-    elif hosted_demo_allowed(request) and settings.hosted_demo_password is not None:
-        expected_password = settings.hosted_demo_password.get_secret_value()
+        token = _DEMO_TOKEN
+    elif hosted_demo_allowed(request):
         token = _HOSTED_DEMO_TOKEN
     else:
         return None
-    valid_password = hmac.compare_digest(password.encode(), expected_password.encode())
+    valid_password = hmac.compare_digest(password.encode(), settings.demo_admin_password.get_secret_value().encode())
     return token if valid_user and valid_password else None
 
 

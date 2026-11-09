@@ -45,7 +45,7 @@ Use the workspace token printed in the backend terminal. To reuse the same works
 
 Use **Model settings** to enter provider credentials and **Sources** to add files. On a phone, both controls are in the toolbar below the workspace header.
 
-To use the demo account, set `$env:ENABLE_LOCAL_DEMO_LOGIN = 'true'` before starting the API on loopback. Open the frontend on localhost at port 5173 and select **Use admin login**. Select **Use a workspace token instead** to return to token sign-in.
+To use the demo account, set `DEMO_ADMIN_PASSWORD` to a strong secret and set `$env:ENABLE_LOCAL_DEMO_LOGIN = 'true'` before starting the API on loopback. Open the frontend on localhost at port 5173 and select **Use admin login**. Select **Use a workspace token instead** to return to token sign-in.
 
 ## Sources and providers
 
