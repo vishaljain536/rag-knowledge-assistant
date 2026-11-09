@@ -43,3 +43,11 @@ The app stores extracted passages in its indexes, plus source labels, excerpts a
 2. With a test workspace, ingest two synthetic files in separate requests and retrieve a fact from each. Try a duplicate upload, then reload and reconnect to verify history and source restoration.
 3. Repeat the ingest and query with each provider/store combination you intend to enable. Confirm that a token from a different workspace cannot open or search the test session. Verify network egress and check that neither logs nor error responses contain credentials.
 4. Verify a backup and restore before a persistent pilot. A deployment requiring multiple API workers needs cross-worker write coordination and shared storage before scaling.
+
+## Admin-demo server-managed provider keys
+
+The `admin` demo login can choose **Use configured server key** in Model settings when that provider is configured on the API. It can also choose **Use my own API key** at any time. Workspace-token users never receive the server-key option and the API rejects any attempt to request it.
+
+Set only the providers you want to offer in the backend host's secret environment: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`, and/or `AZURE_OPENAI_API_KEY`. Do not set them as Vercel `VITE_*` variables. The API returns provider names only, never key values. For server-key mode with a different embedding provider, configure a server key for both the chat and embedding providers. Hugging Face embeddings require no provider key.
+
+A server-managed key bills the account that owns that key. Use the option only for a restricted admin/demo workspace, not for public or untrusted users. Rotate a provider key in the host environment and redeploy if it is exposed.

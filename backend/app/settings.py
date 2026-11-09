@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     enable_local_demo_login: bool = False
     hosted_demo_origin: str = ""
     demo_admin_password: SecretStr
+    openai_api_key: SecretStr | None = None
+    gemini_api_key: SecretStr | None = None
+    groq_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
+    mistral_api_key: SecretStr | None = None
+    openrouter_api_key: SecretStr | None = None
+    azure_openai_api_key: SecretStr | None = None
     enable_url_ingestion: bool = False
     url_allowed_hosts: str = ""
     azure_allowed_endpoints: str = ""
@@ -82,6 +89,18 @@ class Settings(BaseSettings):
     @property
     def allowed_url_hosts(self) -> set[str]:
         return {host.strip().lower() for host in self.url_allowed_hosts.split(",") if host.strip()}
+    @property
+    def server_key_providers(self) -> set[str]:
+        return {
+            provider
+            for provider in ("openai", "gemini", "groq", "anthropic", "mistral", "openrouter", "azure_openai")
+            if getattr(self, f"{provider}_api_key") is not None
+        }
+
+    def server_key_for(self, provider: str) -> SecretStr | None:
+        if provider not in {"openai", "gemini", "groq", "anthropic", "mistral", "openrouter", "azure_openai"}:
+            return None
+        return getattr(self, f"{provider}_api_key")
 
 
 settings = Settings()

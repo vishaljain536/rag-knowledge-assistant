@@ -1,6 +1,8 @@
 import hmac
+from dataclasses import dataclass
 from hashlib import sha256
 from secrets import token_urlsafe
+from typing import Literal
 
 from fastapi import Request
 
@@ -11,6 +13,16 @@ _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _DEMO_WORKSPACE = "_local-demo"
 _DEMO_TOKEN = token_urlsafe(32)
 _HOSTED_DEMO_TOKEN = token_urlsafe(32)
+
+
+@dataclass(frozen=True)
+class AuthContext:
+    workspace: str
+    authentication: Literal["workspace_token", "demo_admin", "operator"]
+
+    @property
+    def can_use_server_managed_keys(self) -> bool:
+        return self.authentication == "demo_admin"
 
 
 def local_demo_allowed(request: Request) -> bool:
@@ -45,7 +57,7 @@ def _digest(token: str) -> bytes:
     return sha256(token.encode("ascii")).digest()
 
 
-def authorize(request: Request, *, operator: bool) -> str | None:
+def authorize(request: Request, *, operator: bool) -> AuthContext | None:
     scheme, _, token = request.headers.get("Authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not TOKEN_PATTERN.fullmatch(token):
         return None
@@ -53,14 +65,13 @@ def authorize(request: Request, *, operator: bool) -> str | None:
     if operator:
         expected = settings.admin_token
         if expected and hmac.compare_digest(received, _digest(expected.get_secret_value())):
-            return "operator"
+            return AuthContext("operator", "operator")
         return None
     if local_demo_allowed(request) and hmac.compare_digest(received, _digest(_DEMO_TOKEN)):
-        return _DEMO_WORKSPACE
+        return AuthContext(_DEMO_WORKSPACE, "demo_admin")
     if hosted_demo_allowed(request) and hmac.compare_digest(received, _digest(_HOSTED_DEMO_TOKEN)):
-        return "_hosted-demo"
-    match = None
+        return AuthContext("_hosted-demo", "demo_admin")
     for workspace, configured in settings.workspace_tokens.items():
         if hmac.compare_digest(received, _digest(configured.get_secret_value())):
-            match = workspace
-    return match
+            return AuthContext(workspace, "workspace_token")
+    return None
