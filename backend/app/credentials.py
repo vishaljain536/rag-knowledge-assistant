@@ -9,7 +9,7 @@ def resolve_provider_settings(auth: AuthContext, provider: ProviderSettings) -> 
     if provider.credential_mode == "user":
         return provider
     if not auth.can_use_server_managed_keys:
-        raise ApiError(403, "server_credentials_forbidden", "Server-managed provider keys are available only through admin demo login.")
+        raise ApiError(403, "server_credentials_forbidden", "Server-managed provider keys are available only to the admin.")
 
     chat_key = settings.server_key_for(provider.provider)
     if not chat_key:

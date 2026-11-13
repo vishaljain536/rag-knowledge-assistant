@@ -4,14 +4,16 @@
 
 ### Added
 
-- Hosted demos can opt into admin sign-in using a server-side password and a separate demo workspace.
+- User accounts replace workspace tokens. People sign in as a guest, with email and password, or with Google, and each account gets private sessions. Sign-in tokens are random, stored only as digests, expire, and are revoked on sign-out. Passwords are hashed with scrypt, and repeated failed sign-ins are throttled.
+- A separate admin sign-in at `/#admin`, not linked from the user screen. The admin sees a **Users** panel with every account's sign-in method, join date, last sign-in, sign-in count and session count, plus totals.
+- The admin can choose server-managed provider keys or enter their own; regular users always use their own keys.
 
 - Three landscape themes with preview thumbnails and a preference that persists across visits. Moonlit Observatory and Ember Canyon use new original artwork.
 - Six-second landscape loops bring downhill water flow, lake reflections, aurora, and sweeping canyon sunlight to the sign-in screen and workspace welcome card. The Theme menu can turn background motion off, and the app uses still artwork for reduced motion.
-- A cinematic sign-in screen and dark research workspace with original archive artwork. **Use admin login** offers an alternative to workspace tokens on loopback when enabled on the API.
+- A cinematic sign-in screen and dark research workspace with original archive artwork.
 - An in-app documentation reader for the changelog, code walkthrough, overview, deployment instructions, and project guide. The views use the repository Markdown as their source and support shareable links.
 - A source library with drag-and-drop uploads, preflight file checks, and search for longer source lists. Answers have copy controls and expandable evidence passages.
-- Workspace bearer tokens, separate operator access for logs, server-issued session IDs, and workspace-scoped session and history APIs.
+- Separate operator access for logs, server-issued session IDs, and per-user session and history APIs.
 - Source records with stable content-based IDs, passage counts, and browser restoration of indexed sources and recent chat after reconnecting.
 - Configuration for distinct Azure chat and embedding deployments, approved Azure endpoints, approved Hugging Face models, and server-owned Pinecone namespaces.
 - Bounded, opt-in HTTPS import with an exact host allowlist, validated DNS results, IP-pinned TLS, redirect rejection, and response limits.
@@ -41,7 +43,7 @@
 
 ### Upgrade
 
-- Configure `WORKSPACE_TOKENS` and reconnect through the updated frontend. Set `ADMIN_TOKEN` separately if you need operational logs.
+- `WORKSPACE_TOKENS`, `ENABLE_LOCAL_DEMO_LOGIN` and `HOSTED_DEMO_ORIGIN` are no longer used and can be removed. Set `DEMO_ADMIN_PASSWORD` for admin sign-in and optionally `GOOGLE_CLIENT_ID`. Existing workspace-token sessions are not linked to the new accounts.
 - Existing prototype tables and indexes are left in place for backup or offline export. Create a new workspace session and re-upload source files. Browser-issued prototype IDs cannot establish ownership.
 - Follow the [deployment guide](DEPLOYMENT.md#upgrading-from-the-prototype) for storage and backup changes.
 

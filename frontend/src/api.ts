@@ -1,4 +1,4 @@
-import type { ChatMessage, CorpusProfile, Identity, SessionState, SessionSummary, Settings, Source } from "./types";
+import type { AdminReport, AuthResult, ChatMessage, CorpusProfile, Identity, SessionState, SessionSummary, Settings, Source } from "./types";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -74,13 +74,46 @@ async function request<T>(token: string, path: string, init: RequestInit = {}): 
   return body as T;
 }
 
-export async function previewLogin(username: string, password: string) {
-  const { token } = await request<{ token: string }>("", "/preview/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  return token;
+const json = (body: unknown): RequestInit => ({
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+export function authConfig() {
+  return request<{ google_client_id: string | null }>("", "/auth/config");
+}
+
+export function guestLogin() {
+  return request<AuthResult>("", "/auth/guest", { method: "POST", body: "" });
+}
+
+export function registerAccount(email: string, password: string, name: string) {
+  return request<AuthResult>("", "/auth/register", json({ email, password, name: name || null }));
+}
+
+export function emailLogin(email: string, password: string) {
+  return request<AuthResult>("", "/auth/login", json({ email, password }));
+}
+
+export function googleLogin(credential: string) {
+  return request<AuthResult>("", "/auth/google", json({ credential }));
+}
+
+export function adminLogin(username: string, password: string) {
+  return request<AuthResult>("", "/admin/login", json({ username, password }));
+}
+
+export async function logout(token: string) {
+  try {
+    await request(token, "/auth/logout", { method: "POST", body: "" });
+  } catch {
+    // Signing out locally still succeeds when the API is unreachable.
+  }
+}
+
+export function adminUsers(token: string) {
+  return request<AdminReport>(token, "/admin/users");
 }
 
 export function getIdentity(token: string) {

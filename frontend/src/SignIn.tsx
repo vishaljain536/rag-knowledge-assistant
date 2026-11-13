@@ -1,22 +1,61 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icons";
 import { Landscape } from "./Landscape";
 import type { ThemeId } from "./ThemePicker";
 
-const TOKEN_FORMAT = /^[A-Za-z0-9_-]{32,128}$/;
+type GoogleIdentity = {
+  accounts: { id: {
+    initialize: (options: { client_id: string; callback: (response: { credential?: string }) => void }) => void;
+    renderButton: (element: HTMLElement, options: Record<string, unknown>) => void;
+  } };
+};
 
-// People often paste a whole config line such as WORKSPACE_TOKENS='{"team":"<token>"}'.
-// Use the token inside it when there is exactly one; otherwise send the text unchanged.
-function cleanToken(raw: string) {
-  const text = raw.trim();
-  if (TOKEN_FORMAT.test(text)) return text;
-  const candidates = text.match(/[A-Za-z0-9_-]{32,128}/g) ?? [];
-  return candidates.length === 1 ? candidates[0] : text;
+declare global {
+  interface Window { google?: GoogleIdentity }
 }
 
-const localPreview = ["localhost", "127.0.0.1"].includes(window.location.hostname) && window.location.port === "5173";
-const hostedDemo = window.location.protocol === "https:" && import.meta.env.VITE_ENABLE_HOSTED_DEMO_LOGIN === "true";
+const GOOGLE_SCRIPT = "https://accounts.google.com/gsi/client";
+
+function loadGoogleScript(): Promise<void> {
+  if (window.google?.accounts) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(`script[src="${GOOGLE_SCRIPT}"]`);
+    const script = existing || document.createElement("script");
+    script.addEventListener("load", () => resolve(), { once: true });
+    script.addEventListener("error", () => reject(new Error("Google sign-in could not load.")), { once: true });
+    if (!existing) {
+      script.src = GOOGLE_SCRIPT;
+      script.async = true;
+      document.head.appendChild(script);
+    }
+  });
+}
+
+function GoogleButton({ clientId, disabled, onCredential }: { clientId: string; disabled: boolean; onCredential: (credential: string) => void }) {
+  const container = useRef<HTMLDivElement>(null);
+  const callback = useRef(onCredential);
+  callback.current = onCredential;
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    loadGoogleScript().then(() => {
+      if (!active || !container.current || !window.google) return;
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: response => { if (response.credential) callback.current(response.credential); },
+      });
+      window.google.accounts.id.renderButton(container.current, {
+        theme: "filled_black", size: "large", shape: "pill", text: "continue_with", width: 320,
+      });
+    }).catch(() => active && setFailed(true));
+    return () => { active = false; };
+  }, [clientId]);
+
+  if (failed) return <p className="muted">Google sign-in could not load. Use email or guest access instead.</p>;
+  return <div className={`google-button ${disabled ? "disabled" : ""}`} ref={container} aria-busy={disabled} />;
+}
 
 export function Brand() {
   return <div className="brand">
@@ -25,20 +64,15 @@ export function Brand() {
   </div>;
 }
 
-export function SignIn({ busy, notice, connect, signIn, themeControl, theme, motionEnabled }: {
+type Shared = {
   busy: boolean;
   notice: ReactNode;
-  connect: (token: string) => void;
-  signIn: (username: string, password: string) => Promise<boolean>;
   themeControl: ReactNode;
   theme: ThemeId;
   motionEnabled: boolean;
-}) {
-  const [useToken, setUseToken] = useState(true);
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("");
-  const [workspaceToken, setWorkspaceToken] = useState("");
+};
 
+function Arrival({ theme, motionEnabled, themeControl, children }: Pick<Shared, "theme" | "motionEnabled" | "themeControl"> & { children: ReactNode }) {
   return <div className="arrival">
     <Landscape theme={theme} motionEnabled={motionEnabled} />
     <header className="arrival-masthead">
@@ -54,33 +88,7 @@ export function SignIn({ busy, notice, connect, signIn, themeControl, theme, mot
         <h1>Find the <em>signal.</em></h1>
         <p className="arrival-description">Search across your documents, ask questions in plain language, and follow each citation back to its source.</p>
       </div>
-      <form className="arrival-card" onSubmit={event => {
-        event.preventDefault();
-        if (useToken) connect(cleanToken(workspaceToken));
-        else void signIn(username.trim(), password).then(success => { if (success) setPassword(""); });
-      }}>
-        <div className="arrival-card-icon"><Icon name="lock" size={20} /></div>
-        <h2>Enter the workspace</h2>
-        <p>{useToken ? "Use the access token from your workspace." : "Sign in to the demo workspace."}</p>
-        {useToken ? <label>Workspace token
-          <input type="password" autoComplete="off" placeholder="Paste your workspace token" value={workspaceToken} disabled={busy} onChange={event => setWorkspaceToken(event.target.value)} />
-        </label> : <>
-          <label>Username
-            <input autoComplete="username" autoCapitalize="none" spellCheck={false} placeholder="Enter your username" value={username} disabled={busy} onChange={event => setUsername(event.target.value)} />
-          </label>
-          <label>Password
-            <input type="password" autoComplete="current-password" placeholder="Enter your password" value={password} disabled={busy} onChange={event => setPassword(event.target.value)} />
-          </label>
-        </>}
-        {notice}
-        <button className="button primary arrival-submit" disabled={busy || (useToken ? !workspaceToken.trim() : !username.trim() || !password)}>
-          {busy ? "Connecting…" : useToken ? "Connect workspace" : "Sign in"}
-          {busy ? <span className="spinner" /> : <Icon name="arrow" size={17} />}
-        </button>
-        {(localPreview || hostedDemo) && <button type="button" className="text-button" disabled={busy} onClick={() => setUseToken(!useToken)}>
-          {useToken ? "Use admin login" : "Use a workspace token instead"}
-        </button>}
-      </form>
+      {children}
     </main>
     <footer className="arrival-footer">
       <span><Icon name="folder" size={17} /> Bring your sources</span>
@@ -88,4 +96,89 @@ export function SignIn({ busy, notice, connect, signIn, themeControl, theme, mot
       <span><Icon name="file" size={17} /> See the supporting passages</span>
     </footer>
   </div>;
+}
+
+export function SignIn({ busy, notice, themeControl, theme, motionEnabled, googleClientId, onGuest, onEmail, onGoogle }: Shared & {
+  googleClientId: string | null;
+  onGuest: () => void;
+  onEmail: (mode: "login" | "register", email: string, password: string, name: string) => Promise<boolean>;
+  onGoogle: (credential: string) => void;
+}) {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const registering = mode === "register";
+
+  return <Arrival theme={theme} motionEnabled={motionEnabled} themeControl={themeControl}>
+    <section className="arrival-card" aria-labelledby="sign-in-title">
+      <div className="arrival-card-icon"><Icon name="user" size={20} /></div>
+      <h2 id="sign-in-title">{registering ? "Create your account" : "Welcome back"}</h2>
+      <p>{registering ? "Your sessions and documents stay private to your account." : "Sign in to restore your sessions, or try it as a guest."}</p>
+
+      {googleClientId && <>
+        <GoogleButton clientId={googleClientId} disabled={busy} onCredential={onGoogle} />
+        <div className="auth-divider"><span>or</span></div>
+      </>}
+
+      <form className="auth-form" onSubmit={event => {
+        event.preventDefault();
+        void onEmail(mode, email.trim(), password, name.trim()).then(success => { if (success) setPassword(""); });
+      }}>
+        {registering && <label>Name <small>Optional</small>
+          <input autoComplete="name" placeholder="Your name" value={name} disabled={busy} onChange={event => setName(event.target.value)} />
+        </label>}
+        <label>Email
+          <input type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} placeholder="you@example.com" value={email} disabled={busy} onChange={event => setEmail(event.target.value)} />
+        </label>
+        <label>Password {registering && <small>At least 8 characters</small>}
+          <input type="password" autoComplete={registering ? "new-password" : "current-password"} minLength={registering ? 8 : undefined} placeholder={registering ? "Choose a password" : "Your password"} value={password} disabled={busy} onChange={event => setPassword(event.target.value)} />
+        </label>
+        {notice}
+        <button className="button primary arrival-submit" disabled={busy || !email.trim() || !password || (registering && password.length < 8)}>
+          {busy ? "Signing in…" : registering ? "Create account" : "Sign in with email"}
+          {busy ? <span className="spinner" /> : <Icon name="arrow" size={17} />}
+        </button>
+      </form>
+
+      <button type="button" className="text-button" disabled={busy} onClick={() => setMode(registering ? "login" : "register")}>
+        {registering ? "Already have an account? Sign in" : "New here? Create an account"}
+      </button>
+      <div className="auth-divider"><span>or</span></div>
+      <button type="button" className="button secondary guest-button" disabled={busy} onClick={onGuest}>
+        <Icon name="user" size={17} /> Continue as guest
+      </button>
+      <p className="muted guest-note">Guest sessions are tied to this browser. Create an account to keep them across devices.</p>
+    </section>
+  </Arrival>;
+}
+
+export function AdminSignIn({ busy, notice, themeControl, theme, motionEnabled, onSignIn }: Shared & {
+  onSignIn: (username: string, password: string) => Promise<boolean>;
+}) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+
+  return <Arrival theme={theme} motionEnabled={motionEnabled} themeControl={themeControl}>
+    <form className="arrival-card" aria-labelledby="admin-title" onSubmit={event => {
+      event.preventDefault();
+      void onSignIn(username.trim(), password).then(success => { if (success) setPassword(""); });
+    }}>
+      <div className="arrival-card-icon"><Icon name="lock" size={20} /></div>
+      <h2 id="admin-title">Admin sign-in</h2>
+      <p>Restricted to the workspace administrator.</p>
+      <label>Username
+        <input autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} disabled={busy} onChange={event => setUsername(event.target.value)} />
+      </label>
+      <label>Password
+        <input type="password" autoComplete="current-password" value={password} disabled={busy} onChange={event => setPassword(event.target.value)} />
+      </label>
+      {notice}
+      <button className="button primary arrival-submit" disabled={busy || !username.trim() || !password}>
+        {busy ? "Signing in…" : "Sign in as admin"}
+        {busy ? <span className="spinner" /> : <Icon name="arrow" size={17} />}
+      </button>
+      <a className="text-button" href="#">Back to user sign-in</a>
+    </form>
+  </Arrival>;
 }

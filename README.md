@@ -1,6 +1,6 @@
 # Global RAG Assistant
 
-Ask questions about your documents and inspect the passages used in the answer. The React frontend connects to a FastAPI backend. LangGraph routes questions through retrieval and generation. SQLite keeps workspace-scoped sessions, source records and transcripts.
+Ask questions about your documents and inspect the passages used in the answer. The React frontend connects to a FastAPI backend. LangGraph routes questions through retrieval and generation. SQLite keeps user accounts and each user's private sessions, source records and transcripts.
 
 Open **Documentation** in the app to read the same project files, including the changelog and code walkthrough.
 
@@ -13,10 +13,9 @@ Open **Documentation** in the app to read the same project files, including the 
 
 ### Docker Compose
 
-1. Copy `.env.example` to `.env` and generate a token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
-2. Set `WORKSPACE_TOKENS='{"local":"paste-your-generated-token-here"}'` in `.env`. Treat the token like a password.
-3. Run `docker compose up --build` and open [the local frontend](http://localhost:5173).
-4. Connect with the workspace token. Enter a provider key, upload a file, and ask a question. Use one workspace slug and independently generated token per group that should share a corpus.
+1. Copy `.env.example` to `.env` and set `DEMO_ADMIN_PASSWORD` to a strong secret, for example from `python -c "import secrets; print(secrets.token_urlsafe(24))"`.
+2. Run `docker compose up --build` and open [the local frontend](http://localhost:5173).
+3. Continue as a guest, create an account with email and password, or use Google if `GOOGLE_CLIENT_ID` is set. Enter a provider key, upload a file, and ask a question.
 
 Compose binds the services to loopback and uses the named `rag-data` volume. `docker compose down` retains the volume. Review the [upgrade steps](DEPLOYMENT.md#upgrading-from-the-prototype) if you already have a bind-mounted data directory.
 
@@ -28,9 +27,8 @@ Backend, from `backend/` in PowerShell:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.lock
-$workspaceToken = python -c "import secrets; print(secrets.token_urlsafe(32))"
-$env:WORKSPACE_TOKENS = @{ local = $workspaceToken } | ConvertTo-Json -Compress
-$workspaceToken
+$env:DEMO_ADMIN_PASSWORD = python -c "import secrets; print(secrets.token_urlsafe(24))"
+$env:DEMO_ADMIN_PASSWORD
 python -m uvicorn app.main:app --reload --port 8000 --no-access-log
 ```
 
@@ -41,11 +39,17 @@ npm ci
 npm run dev
 ```
 
-Use the workspace token printed in the backend terminal. To reuse the same workspace on a later launch, supply its configured slug and token again. The session list, uploaded source labels and transcripts are restored after reconnecting. Only the last selected session ID is stored in the browser.
+Sign in as a guest, with email and password, or with Google. Each account gets a private set of sessions, and the browser keeps you signed in for 30 days. Guest accounts are tied to the browser they were created in.
 
 Use **Model settings** to enter provider credentials and **Sources** to add files. On a phone, both controls are in the toolbar below the workspace header.
 
-To use the demo account, set `DEMO_ADMIN_PASSWORD` to a strong secret and set `$env:ENABLE_LOCAL_DEMO_LOGIN = 'true'` before starting the API on loopback. Open the frontend on localhost at port 5173 and select **Use admin login**. Select **Use a workspace token instead** to return to token sign-in.
+## Admin
+
+The admin signs in separately at `/#admin` (for example `http://localhost:5173/#admin`) with `ADMIN_USERNAME` (default `admin`) and `DEMO_ADMIN_PASSWORD`. The regular sign-in screen does not link to it. After signing in, **Users** in the sidebar lists every registered user with their sign-in method, join date, last sign-in, sign-in count and session count, plus totals for registered users, sign-ins, users active in the last 24 hours and new users this week.
+
+## Google sign-in
+
+Create an OAuth client of type **Web application** in Google Cloud Console, add the frontend origin (for example `https://rag-knowledge-assistant-wine.vercel.app` and `http://localhost:5173`) under **Authorized JavaScript origins**, and set its client ID as `GOOGLE_CLIENT_ID` on the API. The frontend reads it from the API, so no frontend rebuild is needed. The API verifies each Google ID token's signature, audience and verified email before signing the user in.
 
 ## Sources and providers
 
@@ -69,4 +73,4 @@ The tests use temporary SQLite and local indexes with synthetic provider respons
 
 ## Admin server-managed provider keys
 
-The admin-demo workspace can select a configured server key or paste a personal key in **Model settings**. Configure provider keys only as server secrets (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`, `AZURE_OPENAI_API_KEY`), never as `VITE_*` variables. Workspace-token users must use their own keys. See [DEPLOYMENT.md](DEPLOYMENT.md) for the billing and embedding-provider rules.
+The admin can select a configured server key or paste a personal key in **Model settings**. Configure provider keys only as server secrets (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`, `AZURE_OPENAI_API_KEY`), never as `VITE_*` variables. Regular users must use their own keys. See [DEPLOYMENT.md](DEPLOYMENT.md) for the billing and embedding-provider rules.
