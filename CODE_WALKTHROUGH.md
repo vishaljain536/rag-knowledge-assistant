@@ -16,7 +16,7 @@
 
 The transcript follows new messages while the reader is near the bottom. When they scroll back, the composer offers a **Latest messages** control. Each answer can be copied and its numbered evidence passages can be opened individually. [SignIn.tsx](frontend/src/SignIn.tsx) renders the entry screen, [Icons.tsx](frontend/src/Icons.tsx) provides the SVG icon set, and [archive-falls.webp](frontend/public/archive-falls.webp) supplies the original generated artwork for the entry screen and the workspace welcome card.
 
-**Use admin login** exchanges demo credentials for a process-scoped bearer token through `POST /preview/login`. The local account requires loopback, `ENABLE_LOCAL_DEMO_LOGIN=true`, and the server-only `DEMO_ADMIN_PASSWORD`. Hosted demo access requires a configured HTTPS frontend origin and the same server-only password. The local and hosted demo tokens open separate workspaces and have no operator access.
+The sign-in screen offers **Continue with Google** (when `GOOGLE_CLIENT_ID` is set), email sign-in and registration, and **Continue as guest**. The admin signs in separately at `/#admin` through `POST /admin/login`, using `ADMIN_USERNAME` and `DEMO_ADMIN_PASSWORD`. [AdminUsers.tsx](frontend/src/AdminUsers.tsx) renders the admin's user list from `GET /admin/users`, which returns 403 for regular users.
 
 [ThemePicker.tsx](frontend/src/ThemePicker.tsx) stores the selected theme and motion preference locally and sets the palette at the document root. The sign-in screen, workspace, and documentation share those colors.
 
@@ -33,7 +33,7 @@ The documentation view loads separately from the workspace bundle. Update the Ma
 ## Identity, sessions and persistence
 
 ```text
-Workspace token -> server-configured workspace slug
+Guest / email / Google sign-in -> User row -> bearer token (digest stored) -> private workspace u-<user id>
                        |
                        +-> RagSession UUID -> embedding profile + active snapshot
                                       |
@@ -41,11 +41,11 @@ Workspace token -> server-configured workspace slug
                                       +-> Message rows -> recent transcript
 ```
 
-[settings.py](backend/app/settings.py) loads configuration from the process environment and local dotenv when present. [access.py](backend/app/access.py) matches a bearer token to a configured workspace using digest comparison. A workspace token authenticates a group. An operator token is scoped to operational log endpoints. Provider keys authorize requests to model vendors and are independent of workspace access.
+[settings.py](backend/app/settings.py) loads configuration from the process environment and local dotenv when present. [accounts.py](backend/app/accounts.py) creates guest, email and Google accounts, hashes passwords with scrypt, verifies Google ID tokens against `GOOGLE_CLIENT_ID`, throttles repeated failed sign-ins, and builds the admin user report. [access.py](backend/app/access.py) issues random bearer tokens, stores only their SHA-256 digests in `rag_auth_tokens` with an expiry, and maps each token to a private `u-<user id>` workspace or to the admin. Admin tokens also open `/logs`; the optional fixed `ADMIN_TOKEN` opens only the log endpoints. Provider keys authorize requests to model vendors and are independent of account access.
 
 [models.py](backend/app/models.py) defines the tables. `rag_sessions` stores ownership and the retrieval profile. `rag_sources` has a composite key of session ID and source hash. `rag_messages` stores the role, text and serialized citations. `db.py` creates the database engine and enables SQLite foreign keys. The new tables use separate names from the prototype because the previous records have no authenticated owner. [db.py](backend/app/db.py) · [Upgrade steps](DEPLOYMENT.md#upgrading-from-the-prototype)
 
-The browser calls `GET /sessions` after the user enters a token. It opens the last selected session if it belongs to this workspace and is in the returned list, otherwise it opens a recent session or creates one with `POST /sessions`. `GET /sessions/{id}` restores source and profile state. `GET /conversations/{id}` restores the latest 100 messages. The browser can safely retain a session ID because access still requires the workspace token.
+The browser calls `GET /identity` and `GET /sessions` after sign-in and keeps the bearer token in local storage so a reload stays signed in. It opens the last selected session if it belongs to this user and is in the returned list, otherwise it opens a recent session or creates one with `POST /sessions`. `GET /sessions/{id}` restores source and profile state. `GET /conversations/{id}` restores the latest 100 messages. The browser can safely retain a session ID because access still requires that user's token.
 
 ## Upload to searchable source
 

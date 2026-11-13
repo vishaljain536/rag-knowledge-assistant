@@ -19,9 +19,11 @@ services:
         value: /tmp/rag-data/huggingface
       - key: ENABLE_URL_INGESTION
         value: "false"
-      - key: WORKSPACE_TOKENS
-        sync: false
+      # Admin sign-in password (username defaults to "admin"; override with ADMIN_USERNAME).
       - key: DEMO_ADMIN_PASSWORD
+        sync: false
+      # Optional: OAuth web client ID that enables "Continue with Google".
+      - key: GOOGLE_CLIENT_ID
         sync: false
       # Optional: only the admin-demo workspace can select these server-managed keys.
       - key: OPENAI_API_KEY

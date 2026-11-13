@@ -7,8 +7,12 @@ from langchain_core.embeddings import Embeddings
 from pydantic import SecretStr
 from sqlalchemy import create_engine
 
+from datetime import timedelta
+
 from app import corpora, db, graph
+from app.access import digest, utcnow
 from app.main import app
+from app.models import AuthToken, User
 from app.settings import settings
 
 
@@ -56,8 +60,9 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "engine", engine)
     monkeypatch.setattr(db.SessionLocal, "kw", {**db.SessionLocal.kw, "bind": engine})
     monkeypatch.setattr(settings, "data_dir", tmp_path)
-    monkeypatch.setattr(settings, "workspace_tokens", {"alpha": SecretStr(TOKEN), "beta": SecretStr(OTHER_TOKEN)})
     monkeypatch.setattr(settings, "admin_token", SecretStr(ADMIN_TOKEN))
+    monkeypatch.setattr(settings, "admin_username", "admin")
+    monkeypatch.setattr(settings, "google_client_id", "")
     monkeypatch.setattr(settings, "demo_admin_password", SecretStr("demo-test-password"))
     monkeypatch.setattr(settings, "openai_api_key", SecretStr("server-openai-test-key"))
     monkeypatch.setattr(settings, "gemini_api_key", SecretStr("server-gemini-test-key"))
@@ -78,5 +83,11 @@ def client(tmp_path, monkeypatch):
 
     monkeypatch.setattr(graph, "chat_model", lambda *_: Model())
     with TestClient(app) as test_client:
+        # Two independent signed-in users, mirroring two real accounts.
+        with db.SessionLocal.begin() as session:
+            for user_id, token in (("alpha-user", TOKEN), ("beta-user", OTHER_TOKEN)):
+                session.add(User(id=user_id, method="email", email=f"{user_id}@example.test", name=user_id, login_count=1))
+                session.flush()
+                session.add(AuthToken(digest=digest(token), kind="user", user_id=user_id, expires_at=utcnow() + timedelta(days=1)))
         yield test_client
     engine.dispose()

@@ -12,10 +12,11 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from starlette.datastructures import UploadFile
 
-from . import corpora
-from .access import AuthContext, authorize, demo_login, hosted_demo_allowed, local_demo_allowed
+from . import accounts, corpora
+from .access import AuthContext, admin_credentials_valid, authorize, bearer, issue_token, revoke_token
 from .credentials import resolve_provider_settings
 from .db import SessionLocal, init_db
+from .models import User
 from .documents import MAX_FILES, MAX_FILE_BYTES, MAX_UPLOAD_BYTES, extract_upload
 from .errors import ApiError
 from .operational_logs import log_event, reset_request_id, set_request_id, store as log_store, stream_events
@@ -33,7 +34,13 @@ async def lifespan(application: FastAPI):
     log_event("info", "app.stopped", "Backend application stopped")
 
 
-app = FastAPI(title="Global RAG Assistant API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="Global RAG Assistant API", version="3.0.0", lifespan=lifespan)
+
+# Sign-in routes have no bearer token yet; every other route requires one.
+PUBLIC_ROUTES = {
+    ("GET", "/health"), ("GET", "/auth/config"), ("POST", "/auth/guest"), ("POST", "/auth/register"),
+    ("POST", "/auth/login"), ("POST", "/auth/google"), ("POST", "/admin/login"), ("POST", "/auth/logout"),
+}
 
 
 def _error(request: Request, status: int, code: str, message: str) -> JSONResponse:
@@ -90,17 +97,13 @@ async def request_boundary(request: Request, call_next):
     request.state.request_id = request_id
     started = time.perf_counter()
     operator = request.url.path.rstrip("/") in {"/logs", "/logs/stream"}
-    public = request.method == "GET" and request.url.path == "/health"
-    demo = request.method == "POST" and request.url.path == "/preview/login"
+    public = (request.method, request.url.path) in PUBLIC_ROUTES
     try:
-        if demo:
-            if local_demo_allowed(request) or hosted_demo_allowed(request):
-                response = _body_limit(request)
-                if response is None:
-                    response = await call_next(request)
-            else:
-                response = _error(request, 404, "not_found", "Demo sign-in is unavailable.")
-        elif not public:
+        if public:
+            response = _body_limit(request)
+            if response is None:
+                response = await call_next(request)
+        else:
             auth = authorize(request, operator=operator)
             if auth is None:
                 response = _error(request, 401, "unauthorized", "A valid access token is required.")
@@ -110,8 +113,6 @@ async def request_boundary(request: Request, call_next):
                 response = _body_limit(request)
                 if response is None:
                     response = await call_next(request)
-        else:
-            response = await call_next(request)
     except Exception as exc:
         # An SDK exception may include a credential or provider request payload.
         log_event("error", "http.failed", "Request failed before a response was produced", error_type=type(exc).__name__)
@@ -120,7 +121,7 @@ async def request_boundary(request: Request, call_next):
         reset_request_id(token)
 
     response.headers["X-Request-ID"] = request_id
-    if not public:
+    if request.url.path != "/health":
         response.headers["Cache-Control"] = "no-store"
     if not operator:
         route = getattr(request.scope.get("route"), "path", "unmatched")
@@ -148,24 +149,66 @@ def health():
     return {"status": "ok"}
 
 
-class DemoCredentials(BaseModel):
-    username: str = Field(max_length=64)
-    password: str = Field(max_length=128)
+@app.get("/auth/config")
+def auth_config():
+    return {"google_client_id": settings.google_client_id or None}
 
 
-@app.post("/preview/login", include_in_schema=False)
-def preview_login(request: Request, credentials: DemoCredentials):
-    token = demo_login(request, credentials.username, credentials.password)
-    if token is None:
+@app.post("/auth/guest", status_code=201)
+def guest_sign_in():
+    return accounts.create_guest()
+
+
+@app.post("/auth/register", status_code=201)
+def register(data: accounts.Registration):
+    return accounts.register(data)
+
+
+@app.post("/auth/login")
+def email_sign_in(data: accounts.EmailCredentials):
+    return accounts.email_login(data)
+
+
+@app.post("/auth/google")
+def google_sign_in(data: accounts.GoogleCredential):
+    return accounts.google_login(data)
+
+
+@app.post("/admin/login")
+def admin_sign_in(data: accounts.AdminCredentials):
+    accounts.check_throttle("admin")
+    if not admin_credentials_valid(data.username, data.password):
+        accounts._record_failure("admin")
         raise ApiError(401, "invalid_credentials", "The username or password is incorrect.")
-    return {"token": token}
+    accounts._clear_failures("admin")
+    return {"token": issue_token("admin")}
+
+
+@app.post("/auth/logout")
+def sign_out(request: Request):
+    token = bearer(request)
+    if token:
+        revoke_token(token)
+    return {"status": "signed_out"}
+
+
+@app.get("/admin/users")
+def admin_users(request: Request):
+    if request.state.auth.authentication != "admin":
+        raise ApiError(403, "admin_required", "Only the admin can view registered users.")
+    return accounts.admin_users()
 
 
 @app.get("/identity")
 def identity(request: Request):
     auth: AuthContext = request.state.auth
+    user = None
+    if auth.user_id:
+        with SessionLocal() as db:
+            row = db.get(User, auth.user_id)
+            user = accounts.user_view(row) if row else None
     return {
-        "workspace": auth.workspace,
+        "user": user,
         "authentication": auth.authentication,
         "can_use_server_managed_keys": auth.can_use_server_managed_keys,
         "server_key_providers": sorted(settings.server_key_providers) if auth.can_use_server_managed_keys else [],

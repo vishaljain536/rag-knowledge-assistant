@@ -1,10 +1,12 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
-import { addUrl, ask, createSession, getIdentity, listSessions, loadSession, previewLogin, upload } from "./api";
+import { addUrl, adminLogin, ask, authConfig, createSession, emailLogin, getIdentity, googleLogin, guestLogin, listSessions, loadSession, logout, registerAccount, upload } from "./api";
+import { AdminUsers } from "./AdminUsers";
+import type { AuthResult } from "./types";
 import { Icon } from "./Icons";
 import { Landscape } from "./Landscape";
-import { Brand, SignIn } from "./SignIn";
+import { AdminSignIn, Brand, SignIn } from "./SignIn";
 import { applyTheme, readBackgroundMotion, readTheme, saveBackgroundMotion, ThemePicker } from "./ThemePicker";
 import { modelIssue, ModelSettings, providers } from "./ModelSettings";
 import { SourceLibrary, uploadIssue } from "./SourceLibrary";
@@ -24,8 +26,26 @@ const defaults: Settings = {
 };
 const suggestions = ["Summarize the key points", "Compare the main findings", "What evidence supports the conclusion?"];
 const activeSessionKey = "global-rag-active-session";
+const authKey = "global-rag-auth";
 const questionLimit = 12000;
-type Panel = "workspace" | "settings" | "sources" | "theme";
+type Panel = "workspace" | "settings" | "sources" | "theme" | "users";
+
+function readStored(key: string) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: string | null) {
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch {
+    // Without browser storage the user signs in again after a reload.
+  }
+}
 type Activity = "session" | "upload" | "answer";
 
 function messageFrom(error: unknown, fallback: string) {
@@ -108,6 +128,7 @@ export default function App() {
   const [settings, setSettings] = useState(defaults);
   const [token, setToken] = useState("");
   const [identity, setIdentity] = useState<Identity | null>(null);
+  const [googleClientId, setGoogleClientId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState("");
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [profile, setProfile] = useState<CorpusProfile | null>(null);
@@ -206,6 +227,7 @@ export default function App() {
       setSessions(recent);
       setIdentity(identityResponse);
       setToken(access);
+      writeStored(authKey, access);
       setPanel(null);
       return true;
     } catch (error) {
@@ -216,22 +238,46 @@ export default function App() {
     }
   }
 
-  async function signIn(username: string, password: string) {
+  async function authenticate(attempt: () => Promise<AuthResult>, fallback: string) {
     if (busy) return false;
     setActivity("session");
     setNotice(null);
+    let access = "";
     try {
-      const access = await previewLogin(username, password);
-      return await openSession(access);
+      access = (await attempt()).token;
     } catch (error) {
-      setNotice({ tone: "error", text: messageFrom(error, "Unable to sign in.") });
-      return false;
-    } finally {
+      setNotice({ tone: "error", text: messageFrom(error, fallback) });
       setActivity(null);
+      return false;
     }
+    setActivity(null);
+    return openSession(access);
   }
 
+  const signInGuest = () => void authenticate(guestLogin, "Unable to start a guest session.");
+  const signInEmail = (mode: "login" | "register", email: string, password: string, name: string) =>
+    authenticate(() => mode === "register" ? registerAccount(email, password, name) : emailLogin(email, password), "Unable to sign in.");
+  const signInGoogle = (credential: string) => void authenticate(() => googleLogin(credential), "Google sign-in failed.");
+  const signInAdmin = (username: string, password: string) => authenticate(() => adminLogin(username, password), "Unable to sign in.");
+
+  useEffect(() => {
+    authConfig().then(config => setGoogleClientId(config.google_client_id)).catch(() => setGoogleClientId(null));
+    const stored = readStored(authKey);
+    if (stored) {
+      void openSession(stored).then(success => {
+        if (!success) {
+          writeStored(authKey, null);
+          setNotice(null);
+        }
+      });
+    }
+    // Restore once on first load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function disconnect() {
+    if (token) void logout(token);
+    writeStored(authKey, null);
     setToken("");
     setIdentity(null);
     setSessionId("");
@@ -318,7 +364,7 @@ export default function App() {
     <button className="button secondary" disabled={busy} onClick={() => void openSession(token, undefined, true)}>
       <Icon name="plus" size={17} /> New session
     </button>
-    <button className="button quiet" disabled={busy} onClick={disconnect}><Icon name="logout" size={17} /> Disconnect</button>
+    <button className="button quiet" disabled={busy} onClick={disconnect}><Icon name="logout" size={17} /> Sign out</button>
   </div> : <p className="muted">Connect to browse sessions and restore your chat.</p>;
 
   const libraryProps = {
@@ -352,10 +398,17 @@ export default function App() {
   </>;
 
   if (!token) return <>
-    <SignIn busy={busy} notice={statusNotice} connect={access => void openSession(access)} signIn={signIn}
-      themeControl={themeControl} theme={theme} motionEnabled={motionEnabled} />
+    {hash === "#admin"
+      ? <AdminSignIn busy={busy} notice={statusNotice} onSignIn={signInAdmin}
+          themeControl={themeControl} theme={theme} motionEnabled={motionEnabled} />
+      : <SignIn busy={busy} notice={statusNotice} googleClientId={googleClientId}
+          onGuest={signInGuest} onEmail={signInEmail} onGoogle={signInGoogle}
+          themeControl={themeControl} theme={theme} motionEnabled={motionEnabled} />}
     {themeOverlay}
   </>;
+
+  const isAdmin = identity?.authentication === "admin";
+  const accountLabel = isAdmin ? "Administrator" : identity?.user?.name || identity?.user?.email || "Guest";
 
   return <div className="app-shell" onDragOver={event => {
     if (event.dataTransfer.types.includes("Files")) event.preventDefault();
@@ -370,9 +423,11 @@ export default function App() {
         <div className="rail-session">{workspaceControls}</div>
       </div>
       <div className="sidebar-bottom">
+        <p className="account-chip"><Icon name={isAdmin ? "lock" : "user"} size={15} /><span>{accountLabel}</span></p>
+        {isAdmin && <button className="button quiet" onClick={() => setPanel("users")} disabled={busy}><Icon name="users" /> Users</button>}
         <button className="button quiet" onClick={() => setPanel("settings")} disabled={!token || busy}><Icon name="settings" /> Model settings</button>
         <a className="button quiet" href="#docs/overview"><Icon name="book" /> Documentation</a>
-        <p className="privacy"><Icon name="lock" size={14} /> Credentials stay in this browser tab and are sent to the configured API.</p>
+        <p className="privacy"><Icon name="lock" size={14} /> Provider keys stay in this browser tab and are sent only to the configured API.</p>
       </div>
     </aside>
 
@@ -391,6 +446,7 @@ export default function App() {
         <button className="button quiet mobile-workspace" onClick={() => setPanel("workspace")} disabled={busy}><Icon name="chat" size={16} /> Workspace</button>
         <button className="button quiet mobile-model" onClick={() => setPanel("settings")} disabled={busy}><Icon name="settings" size={16} /> Model</button>
         <button className="button quiet mobile-sources" onClick={() => setPanel("sources")}><Icon name="folder" size={16} /> Sources <span className="count">{sources.length}</span></button>
+        {isAdmin && <button className="button quiet mobile-users" onClick={() => setPanel("users")} disabled={busy}><Icon name="users" size={16} /> Users</button>}
       </nav>}
 
       <div className="thread" ref={thread} onScroll={event => {
@@ -463,6 +519,9 @@ export default function App() {
         canUseServerManagedKeys={Boolean(identity?.can_use_server_managed_keys)}
         serverKeyProviders={identity?.server_key_providers || []} />
       <form className="overlay-footer" method="dialog"><button className="button primary">Done <Icon name="check" size={17} /></button></form>
+    </Overlay>}
+    {panel === "users" && isAdmin && <Overlay key={panel} title="Users" description="Everyone who has signed up or signed in, with their activity." onDismiss={() => setPanel(null)}>
+      <AdminUsers token={token} />
     </Overlay>}
     {panel === "sources" && <Overlay key={panel} title="Sources" description="Add documents and see what is indexed in this session." onDismiss={() => setPanel(null)}>
       <SourceLibrary {...libraryProps} />

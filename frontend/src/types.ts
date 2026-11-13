@@ -1,5 +1,12 @@
 export type CredentialMode = "user" | "server";
-export type Identity = { workspace: string; authentication: "workspace_token" | "demo_admin"; can_use_server_managed_keys: boolean; server_key_providers: Provider[] };
+export type User = { id: string; method: "guest" | "email" | "google"; email: string | null; name: string | null };
+export type AuthResult = { token: string; user?: User };
+export type Identity = { user: User | null; authentication: "user" | "admin"; can_use_server_managed_keys: boolean; server_key_providers: Provider[] };
+export type AdminUser = User & { created_at: string | null; last_login_at: string | null; login_count: number; sessions: number };
+export type AdminReport = {
+  summary: { total_users: number; guests: number; email: number; google: number; total_logins: number; active_last_24h: number; new_last_7d: number };
+  users: AdminUser[];
+};
 export type Provider = "openai" | "gemini" | "groq" | "anthropic" | "mistral" | "openrouter" | "azure_openai";
 export type OperationalLog = { sequence: number; timestamp: string; level: string; event: string; message: string; request_id?: string; details: Record<string, unknown> };
 export type VectorStore = "faiss" | "chroma" | "pinecone";
